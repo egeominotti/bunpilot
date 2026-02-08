@@ -1,6 +1,6 @@
 {
   "name": "bunpilot",
-  "version": "0.2.0",
+  "version": "0.1.1",
   "description": "Bun-native process manager. PM2 for the Bun ecosystem.",
   "type": "module",
   "main": "src/index.ts",
