@@ -14,7 +14,7 @@ bunpilot
 *.db-shm
 
 # Logs
-logs/
+/logs/
 *.log
 
 # OS files
