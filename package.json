@@ -1,6 +1,6 @@
 {
   "name": "bunpilot",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Bun-native process manager. PM2 for the Bun ecosystem.",
   "type": "module",
   "main": "src/index.ts",
@@ -45,6 +45,14 @@
     "devops",
     "deployment"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/egeominotti/bunpilot.git"
+  },
+  "homepage": "https://github.com/egeominotti/bunpilot#readme",
+  "bugs": {
+    "url": "https://github.com/egeominotti/bunpilot/issues"
+  },
   "license": "MIT",
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.54.0",
