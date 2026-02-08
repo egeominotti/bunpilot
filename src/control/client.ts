@@ -89,7 +89,7 @@ export class ControlClient {
             s.write(payload);
           },
 
-          data(_s, raw) {
+          data(s, raw) {
             buffer += typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
 
             const messages = decodeMessages(buffer);
@@ -99,6 +99,7 @@ export class ControlClient {
             const msg = messages[0];
             if (isControlResponse(msg)) {
               settle(() => resolve(msg));
+              s.end();
             }
           },
 

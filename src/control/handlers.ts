@@ -21,9 +21,9 @@ export interface CommandContext {
   restartApp(name: string): Promise<void>;
   reloadApp(name: string): Promise<void>;
   deleteApp(name: string): Promise<void>;
-  getMetrics(): Record<string, unknown>;
+  getMetrics(): unknown;
   getLogs(name: string, lines?: number): string[];
-  dumpState(): Record<string, unknown>;
+  dumpState(): unknown;
   shutdown(): Promise<void>;
 }
 

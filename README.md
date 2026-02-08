@@ -50,42 +50,65 @@ bun run build    # Produces a single ./bunpilot binary
 
 ## Quick Start
 
-### 1. Start a process
+> **Important:** The bunpilot daemon must be running before you can start or manage any processes. All commands communicate with the daemon over a Unix socket.
+
+### 1. Start the daemon
+
+```bash
+bunpilot daemon start
+```
+
+Verify it is running:
+
+```bash
+bunpilot ping
+```
+
+### 2. Start a process
 
 ```bash
 # Start a single script
-bunpilot start ./src/server.ts --name api
+bunpilot start ./server.ts --name myapp --port 3000
 
 # Start with clustering (4 workers)
-bunpilot start ./src/server.ts --name api --instances 4 --port 3000
+bunpilot start ./server.ts --name myapp --instances 4 --port 3000
 
-# Start from config file
+# Start from a config file
 bunpilot start --config bunpilot.config.ts
 ```
 
-### 2. Manage processes
+### 3. Inspect and monitor
 
 ```bash
-bunpilot list                # List all processes
-bunpilot status api          # Detailed info for a specific app
-bunpilot logs api            # Stream logs
+bunpilot list                # List all processes with status
+bunpilot status myapp        # Detailed info for a specific app
+bunpilot logs myapp          # Stream stdout/stderr logs
 bunpilot metrics             # Live CPU/memory dashboard
+bunpilot metrics --json      # Metrics as JSON
 ```
 
-### 3. Lifecycle operations
+### 4. Lifecycle operations
 
 ```bash
-bunpilot restart api         # Stop + start
-bunpilot reload api          # Zero-downtime rolling restart
-bunpilot stop api            # Graceful stop
-bunpilot delete api          # Stop and remove
+bunpilot restart myapp       # Stop + start
+bunpilot reload myapp        # Zero-downtime rolling restart
+bunpilot stop myapp          # Graceful stop
+bunpilot delete myapp        # Stop and remove from the daemon
 ```
 
-### 4. Daemon management
+### 5. Stop the daemon
+
+When you are done, shut down the daemon and all managed processes:
+
+```bash
+bunpilot daemon stop
+```
+
+### Daemon management
 
 ```bash
 bunpilot daemon start        # Start the background daemon
-bunpilot daemon stop         # Stop the daemon
+bunpilot daemon stop         # Stop the daemon and all processes
 bunpilot daemon status       # Check daemon health
 bunpilot ping                # Verify daemon responsiveness
 ```

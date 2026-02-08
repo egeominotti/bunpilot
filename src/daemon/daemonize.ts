@@ -19,10 +19,10 @@ import { writePidFile, readPidFile, removePidFile, isProcessRunning } from './pi
  * 4. Exits the current (parent) process
  */
 export function daemonize(configPath: string): void {
-  const masterScript = resolve(import.meta.dir, '..', 'core', 'master.ts');
+  const bootScript = resolve(import.meta.dir, 'boot.ts');
 
   const child = Bun.spawn({
-    cmd: ['bun', 'run', masterScript, configPath],
+    cmd: ['bun', 'run', bootScript, configPath],
     stdio: ['ignore', 'ignore', 'ignore'],
     env: {
       ...process.env,
