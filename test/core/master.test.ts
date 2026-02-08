@@ -254,18 +254,24 @@ describe('MasterOrchestrator', () => {
     });
 
     test('shutdown continues even if a callback throws', async () => {
-      const cb1 = mock(() => {
-        throw new Error('cb1 error');
-      });
-      const cb2 = mock(() => {});
-      master.onShutdown(cb1);
-      master.onShutdown(cb2);
+      const origError = console.error;
+      console.error = () => {};
+      try {
+        const cb1 = mock(() => {
+          throw new Error('cb1 error');
+        });
+        const cb2 = mock(() => {});
+        master.onShutdown(cb1);
+        master.onShutdown(cb2);
 
-      // Should not throw
-      await master.shutdown('SIGTERM');
+        // Should not throw
+        await master.shutdown('SIGTERM');
 
-      expect(cb1).toHaveBeenCalledTimes(1);
-      expect(cb2).toHaveBeenCalledTimes(1);
+        expect(cb1).toHaveBeenCalledTimes(1);
+        expect(cb2).toHaveBeenCalledTimes(1);
+      } finally {
+        console.error = origError;
+      }
     });
   });
 
@@ -774,16 +780,22 @@ describe('MasterOrchestrator', () => {
     });
 
     test('handles shutdown callback errors gracefully', async () => {
-      master.onShutdown(() => {
-        throw new Error('cleanup failed');
-      });
-      const cb2 = mock(() => {});
-      master.onShutdown(cb2);
+      const origError = console.error;
+      console.error = () => {};
+      try {
+        master.onShutdown(() => {
+          throw new Error('cleanup failed');
+        });
+        const cb2 = mock(() => {});
+        master.onShutdown(cb2);
 
-      await master.shutdown('SIGTERM');
+        await master.shutdown('SIGTERM');
 
-      // Second callback should still be called despite first throwing
-      expect(cb2).toHaveBeenCalledTimes(1);
+        // Second callback should still be called despite first throwing
+        expect(cb2).toHaveBeenCalledTimes(1);
+      } finally {
+        console.error = origError;
+      }
     });
 
     test('shutdown stops health checks before stopping apps', async () => {
