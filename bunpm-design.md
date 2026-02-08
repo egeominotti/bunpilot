@@ -1,4 +1,4 @@
-# bunpm - Design Document
+# bunpm2 - Design Document
 
 ## Bun-Native Process Manager
 
@@ -10,7 +10,7 @@
 
 ## 1. Visione
 
-bunpm e' un process manager nativo per Bun che fornisce:
+bunpm2 e' un process manager nativo per Bun che fornisce:
 
 - **Clustering** con port sharing e load balancing automatico
 - **Crash recovery** con exponential backoff e restart intelligente
@@ -20,39 +20,39 @@ bunpm e' un process manager nativo per Bun che fornisce:
 - **Log management** con cattura e rotazione automatica
 - **Stato persistente** su SQLite (sopravvive a restart del daemon)
 
-**Perche' bunpm esiste:**
+**Perche' bunpm2 esiste:**
 
-| Problema | Stato attuale | bunpm |
+| Problema | Stato attuale | bunpm2 |
 |----------|--------------|-------|
 | `node:cluster` in Bun | Parziale, no handle passing | Non lo usa. Bun.spawn() + reusePort |
 | PM2 con Bun | Cluster mode rotto | Nativo, zero hack |
-| Scaling multi-core | Nessuna soluzione | `bunpm start -i max` |
-| Zero-downtime deploy | Manuale | `bunpm reload` |
-| Process monitoring | Niente di Bun-native | `bunpm monit` con metriche real-time |
+| Scaling multi-core | Nessuna soluzione | `bunpm2 start -i max` |
+| Zero-downtime deploy | Manuale | `bunpm2 reload` |
+| Process monitoring | Niente di Bun-native | `bunpm2 monit` con metriche real-time |
 
 **Quick start - 30 secondi:**
 
 ```bash
 # Installa
-bun add -g bunpm
+bun add -g bunpm2
 
 # Avvia la tua app su tutti i core
-bunpm start server.ts -i max --port 3000
+bunpm2 start server.ts -i max --port 3000
 
 # Vedi lo stato
-bunpm ls
+bunpm2 ls
 
 # Zero-downtime reload dopo un deploy
-bunpm reload api
+bunpm2 reload api
 
 # Dashboard real-time
-bunpm monit
+bunpm2 monit
 ```
 
 **Config file - 5 righe per partire:**
 
 ```typescript
-// bunpm.config.ts
+// bunpm2.config.ts
 export default {
   apps: [{
     name: 'api',
@@ -70,8 +70,8 @@ export default {
 pm2 start server.js -i max
 # Errore: cluster.fork() non supportato / comportamento imprevedibile
 
-# bunpm (nativo Bun)
-bunpm start server.ts -i max --port 3000
+# bunpm2 (nativo Bun)
+bunpm2 start server.ts -i max --port 3000
 # Funziona. reusePort su Linux, TCP proxy su macOS.
 ```
 
@@ -81,16 +81,16 @@ bunpm start server.ts -i max --port 3000
 
 ### 2.1 Cosa prendiamo da PM2
 
-| Concetto PM2 | bunpm | Note |
+| Concetto PM2 | bunpm2 | Note |
 |--------------|-------|------|
 | Cluster mode (N istanze) | Si | Via reusePort (non node:cluster) |
 | Auto-restart on crash | Si | Con exponential backoff |
 | Zero-downtime reload | Si | Rolling restart, 1 worker alla volta |
 | Daemon mode | Si | Opzionale, foreground di default |
 | Log management | Si | Cattura + rotazione per dimensione |
-| Process list (pm2 ls) | Si | `bunpm ls` con tabella formattata |
+| Process list (pm2 ls) | Si | `bunpm2 ls` con tabella formattata |
 | Monit (pm2 monit) | Si | TUI con CPU, memory, restarts |
-| Ecosystem config file | Si | `bunpm.config.ts` (TypeScript-first) |
+| Ecosystem config file | Si | `bunpm2.config.ts` (TypeScript-first) |
 | Startup scripts | Si | systemd, launchd |
 | Graceful shutdown | Si | SIGTERM + timeout + SIGKILL |
 | Environment variables | Si | Per-app env in config |
@@ -100,7 +100,7 @@ bunpm start server.ts -i max --port 3000
 
 ### 2.2 Cosa prendiamo da systemd
 
-| Concetto systemd | bunpm | Note |
+| Concetto systemd | bunpm2 | Note |
 |------------------|-------|------|
 | Service supervision | Si | Master monitora worker |
 | Restart policies | Si | always, on-failure, never |
@@ -112,13 +112,13 @@ bunpm start server.ts -i max --port 3000
 
 ### 2.3 Cosa prendiamo da Docker/K8s
 
-| Concetto Docker/K8s | bunpm | Note |
+| Concetto Docker/K8s | bunpm2 | Note |
 |---------------------|-------|------|
 | Health checks | Si | HTTP + IPC, configurabili |
 | Readiness probes | Si | Worker IPC "ready" signal |
 | Liveness probes | Si | Heartbeat + HTTP health |
 | Graceful shutdown | Si | SIGTERM con grace period |
-| Rolling updates | Si | `bunpm reload` = rolling restart |
+| Rolling updates | Si | `bunpm2 reload` = rolling restart |
 | Foreground process | Si | Default mode (PID 1 friendly) |
 | Resource monitoring | Si | CPU, memory per worker |
 
@@ -126,7 +126,7 @@ bunpm start server.ts -i max --port 3000
 
 ## 3. Bun-Native: Zero dipendenze npm
 
-bunpm usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
+bunpm2 usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
 
 **API Bun utilizzate:**
 
@@ -171,19 +171,19 @@ bunpm usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                        bunpm CLI                                      │
+│                        bunpm2 CLI                                      │
 │                                                                       │
-│  bunpm start app.ts -i 4 --port 3000                                 │
-│  bunpm ls                                                             │
-│  bunpm reload api                                                     │
-│  bunpm monit                                                          │
-│  bunpm logs api                                                       │
+│  bunpm2 start app.ts -i 4 --port 3000                                 │
+│  bunpm2 ls                                                             │
+│  bunpm2 reload api                                                     │
+│  bunpm2 monit                                                          │
+│  bunpm2 logs api                                                       │
 │                                                                       │
 │  ┌────────────────────────────────────────────────────────────┐       │
 │  │  ControlClient (Unix socket, NDJSON)                       │       │
 │  └──────────────────────┬─────────────────────────────────────┘       │
 └─────────────────────────┼─────────────────────────────────────────────┘
-                          │ ~/.bunpm/bunpm.sock
+                          │ ~/.bunpm2/bunpm2.sock
 ┌─────────────────────────┼─────────────────────────────────────────────┐
 │                         ▼    MASTER PROCESS                           │
 │  ┌───────────────────────────────────────────────────────────────┐    │
@@ -214,7 +214,7 @@ bunpm usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
 │  └───┬───────────────────────────────────────────────────────────┘    │
 │      │                                                                │
 │  ┌───▼────────────────────────────────────────────────────────────┐   │
-│  │  SQLiteStore (~/.bunpm/bunpm.db, WAL mode)                     │   │
+│  │  SQLiteStore (~/.bunpm2/bunpm2.db, WAL mode)                     │   │
 │  │  - apps: registry                                              │   │
 │  │  - workers: stato corrente                                     │   │
 │  │  - restart_history: crash log                                  │   │
@@ -245,18 +245,18 @@ bunpm usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
 ### 4.3 Due modalita' di esecuzione
 
 **Foreground (default, Docker-friendly):**
-- bunpm e' il processo in primo piano (PID 1 in Docker)
+- bunpm2 e' il processo in primo piano (PID 1 in Docker)
 - stdout/stderr dei worker multiplexati con prefissi
 - SIGTERM/SIGINT → graceful shutdown di tutti i worker
 - SIGHUP → reload (zero-downtime restart)
 - Control socket comunque attivo (CLI puo' connettersi)
 
 **Daemon (opzionale, bare metal):**
-- bunpm si stacca dal terminale
-- PID file in `~/.bunpm/bunpm.pid`
-- Log del master in `~/.bunpm/bunpm-daemon.log`
+- bunpm2 si stacca dal terminale
+- PID file in `~/.bunpm2/bunpm2.pid`
+- Log del master in `~/.bunpm2/bunpm2-daemon.log`
 - CLI comunica via Unix socket
-- `bunpm daemon start` / `bunpm daemon stop`
+- `bunpm2 daemon start` / `bunpm2 daemon stop`
 
 ---
 
@@ -417,20 +417,20 @@ type MasterMessage =
 
 ### 6.4 Worker SDK (opzionale)
 
-Un piccolo helper che i worker possono importare per integrarsi con bunpm:
+Un piccolo helper che i worker possono importare per integrarsi con bunpm2:
 
 ```typescript
-// import { bunpmReady, bunpmOnShutdown } from 'bunpm/worker'
+// import { bunpm2Ready, bunpm2OnShutdown } from 'bunpm2/worker'
 
 /** Segnala al master che il worker e' pronto */
-export function bunpmReady(): void {
+export function bunpm2Ready(): void {
   if (typeof process.send === 'function') {
     process.send({ type: 'ready' });
   }
 }
 
 /** Registra handler per graceful shutdown */
-export function bunpmOnShutdown(handler: () => Promise<void> | void): void {
+export function bunpm2OnShutdown(handler: () => Promise<void> | void): void {
   process.on('message', async (msg: any) => {
     if (msg?.type === 'shutdown') {
       await handler();
@@ -440,7 +440,7 @@ export function bunpmOnShutdown(handler: () => Promise<void> | void): void {
 }
 
 /** Avvia reporter automatico delle metriche (ogni collectInterval) */
-export function bunpmStartMetrics(interval: number = 5000): void {
+export function bunpm2StartMetrics(interval: number = 5000): void {
   setInterval(() => {
     if (typeof process.send === 'function') {
       process.send({
@@ -455,43 +455,43 @@ export function bunpmStartMetrics(interval: number = 5000): void {
 }
 ```
 
-**NOTA:** L'SDK e' opzionale. bunpm funziona anche senza. Se il worker non invia `ready` via IPC, il master usa il fallback HTTP health check.
+**NOTA:** L'SDK e' opzionale. bunpm2 funziona anche senza. Se il worker non invia `ready` via IPC, il master usa il fallback HTTP health check.
 
-### 6.5 Esempio: app integrata con bunpm SDK
+### 6.5 Esempio: app integrata con bunpm2 SDK
 
 ```typescript
 // src/server.ts
-import { bunpmReady, bunpmOnShutdown, bunpmStartMetrics } from 'bunpm/worker';
+import { bunpm2Ready, bunpm2OnShutdown, bunpm2StartMetrics } from 'bunpm2/worker';
 
 const server = Bun.serve({
-  port: Number(process.env.BUNPM_PORT) || 3000,
-  reusePort: process.env.BUNPM_REUSE_PORT === '1',
+  port: Number(process.env.BUNPM2_PORT) || 3000,
+  reusePort: process.env.BUNPM2_REUSE_PORT === '1',
   fetch(req) {
     const url = new URL(req.url);
     if (url.pathname === '/health') return new Response('ok');
-    return new Response('Hello from bunpm!');
+    return new Response('Hello from bunpm2!');
   },
 });
 
 // Segnala al master che siamo pronti
-bunpmReady();
+bunpm2Ready();
 
 // Avvia reporter metriche ogni 5s
-bunpmStartMetrics();
+bunpm2StartMetrics();
 
 // Gestisci shutdown graceful
-bunpmOnShutdown(async () => {
+bunpm2OnShutdown(async () => {
   server.stop();
   // chiudi connessioni DB, flush buffer, ecc.
 });
 
-console.log(`Worker ${process.env.BUNPM_WORKER_ID} listening on :${server.port}`);
+console.log(`Worker ${process.env.BUNPM2_WORKER_ID} listening on :${server.port}`);
 ```
 
 ### 6.6 Esempio: app SENZA SDK (funziona comunque)
 
 ```typescript
-// src/server.ts - nessun import da bunpm
+// src/server.ts - nessun import da bunpm2
 const server = Bun.serve({
   port: 3000,
   fetch(req) {
@@ -501,7 +501,7 @@ const server = Bun.serve({
 });
 ```
 
-bunpm rileva che il worker non invia `ready` via IPC e usa il fallback:
+bunpm2 rileva che il worker non invia `ready` via IPC e usa il fallback:
 1. Attende `readyTimeout` (30s default) per IPC "ready"
 2. Se non arriva, prova HTTP GET su `http://127.0.0.1:{port}/health`
 3. Se HTTP risponde 2xx/3xx, il worker e' considerato online
@@ -514,52 +514,52 @@ bunpm rileva che il worker non invia `ready` via IPC e usa il fallback:
 ### 7.1 Panoramica
 
 ```
-bunpm <command> [options]
+bunpm2 <command> [options]
 
 Gestione processi:
-  bunpm start [config|script] [opts]    Avvia app da config o script singolo
-  bunpm stop <app|all>                  Stop graceful
-  bunpm restart <app|all>               Hard restart (stop + start)
-  bunpm reload <app|all>                Zero-downtime rolling restart
-  bunpm delete <app|all>                Stop e rimuovi dal registry
+  bunpm2 start [config|script] [opts]    Avvia app da config o script singolo
+  bunpm2 stop <app|all>                  Stop graceful
+  bunpm2 restart <app|all>               Hard restart (stop + start)
+  bunpm2 reload <app|all>                Zero-downtime rolling restart
+  bunpm2 delete <app|all>                Stop e rimuovi dal registry
 
 Monitoraggio:
-  bunpm list | bunpm ls                 Lista processi gestiti
-  bunpm status <app>                    Stato dettagliato di un'app
-  bunpm monit                           Dashboard real-time (TUI)
-  bunpm logs <app> [--lines N]          Stream log (follow mode)
+  bunpm2 list | bunpm2 ls                 Lista processi gestiti
+  bunpm2 status <app>                    Stato dettagliato di un'app
+  bunpm2 monit                           Dashboard real-time (TUI)
+  bunpm2 logs <app> [--lines N]          Stream log (follow mode)
 
 Metriche:
-  bunpm metrics <app>                   Mostra metriche correnti
-  bunpm metrics <app> --json            Output JSON per scripting
-  bunpm metrics <app> --prometheus      Output Prometheus format
+  bunpm2 metrics <app>                   Mostra metriche correnti
+  bunpm2 metrics <app> --json            Output JSON per scripting
+  bunpm2 metrics <app> --prometheus      Output Prometheus format
 
 Daemon:
-  bunpm daemon start                    Avvia daemon in background
-  bunpm daemon stop                     Ferma daemon
-  bunpm daemon status                   Controlla se daemon e' attivo
+  bunpm2 daemon start                    Avvia daemon in background
+  bunpm2 daemon stop                     Ferma daemon
+  bunpm2 daemon status                   Controlla se daemon e' attivo
 
 Utility:
-  bunpm ping                            Verifica connettivita' al daemon
-  bunpm dump                            Dump stato completo (debug)
-  bunpm init                            Genera bunpm.config.ts di esempio
-  bunpm startup                         Genera script startup OS
+  bunpm2 ping                            Verifica connettivita' al daemon
+  bunpm2 dump                            Dump stato completo (debug)
+  bunpm2 init                            Genera bunpm2.config.ts di esempio
+  bunpm2 startup                         Genera script startup OS
 ```
 
-### 7.2 `bunpm start`
+### 7.2 `bunpm2 start`
 
 ```bash
 # Da config file
-bunpm start                             # cerca bunpm.config.ts nella dir corrente
-bunpm start bunpm.config.ts             # config esplicito
-bunpm start --config ./custom.config.ts
+bunpm2 start                             # cerca bunpm2.config.ts nella dir corrente
+bunpm2 start bunpm2.config.ts             # config esplicito
+bunpm2 start --config ./custom.config.ts
 
 # Da script singolo (senza config file)
-bunpm start server.ts                   # 1 istanza, nessun clustering
-bunpm start server.ts -i 4             # 4 istanze
-bunpm start server.ts -i max           # 1 per CPU core
-bunpm start server.ts -i max --port 3000  # con clustering su porta 3000
-bunpm start server.ts --name api       # nome custom
+bunpm2 start server.ts                   # 1 istanza, nessun clustering
+bunpm2 start server.ts -i 4             # 4 istanze
+bunpm2 start server.ts -i max           # 1 per CPU core
+bunpm2 start server.ts -i max --port 3000  # con clustering su porta 3000
+bunpm2 start server.ts --name api       # nome custom
 
 # Opzioni
 --instances, -i <N|max>                 # numero worker (default: 1)
@@ -571,10 +571,10 @@ bunpm start server.ts --name api       # nome custom
 --max-memory <size>                     # es: "500M", "1G"
 ```
 
-### 7.3 `bunpm ls` - Output
+### 7.3 `bunpm2 ls` - Output
 
 ```
-$ bunpm ls
+$ bunpm2 ls
 ┌──────────┬────┬───────┬────────┬───────┬──────────┬──────────┬──────────┐
 │ App      │ id │ pid   │ state  │ cpu   │ memory   │ uptime   │ restarts │
 ├──────────┼────┼───────┼────────┼───────┼──────────┼──────────┼──────────┤
@@ -587,28 +587,28 @@ $ bunpm ls
 └──────────┴────┴───────┴────────┴───────┴──────────┴──────────┴──────────┘
 ```
 
-### 7.4 `bunpm reload` - Output
+### 7.4 `bunpm2 reload` - Output
 
 ```
-$ bunpm reload api
-[bunpm] Rolling restart di "api" (4 worker, batch=1)
-[bunpm] api:0 │ spawning sostituto...
-[bunpm] api:0 │ nuovo worker pid 12350 online
-[bunpm] api:0 │ draining vecchio worker pid 12340...
-[bunpm] api:0 │ vecchio worker fermato
-[bunpm] api:1 │ spawning sostituto...
-[bunpm] api:1 │ nuovo worker pid 12351 online
-[bunpm] api:1 │ draining vecchio worker pid 12341...
-[bunpm] api:1 │ vecchio worker fermato
-[bunpm] api:2 │ spawning sostituto...
-[bunpm] api:2 │ nuovo worker pid 12352 online
-[bunpm] api:2 │ draining vecchio worker pid 12342...
-[bunpm] api:2 │ vecchio worker fermato
-[bunpm] api:3 │ spawning sostituto...
-[bunpm] api:3 │ nuovo worker pid 12353 online
-[bunpm] api:3 │ draining vecchio worker pid 12343...
-[bunpm] api:3 │ vecchio worker fermato
-[bunpm] Reload completato. 0 errori.
+$ bunpm2 reload api
+[bunpm2] Rolling restart di "api" (4 worker, batch=1)
+[bunpm2] api:0 │ spawning sostituto...
+[bunpm2] api:0 │ nuovo worker pid 12350 online
+[bunpm2] api:0 │ draining vecchio worker pid 12340...
+[bunpm2] api:0 │ vecchio worker fermato
+[bunpm2] api:1 │ spawning sostituto...
+[bunpm2] api:1 │ nuovo worker pid 12351 online
+[bunpm2] api:1 │ draining vecchio worker pid 12341...
+[bunpm2] api:1 │ vecchio worker fermato
+[bunpm2] api:2 │ spawning sostituto...
+[bunpm2] api:2 │ nuovo worker pid 12352 online
+[bunpm2] api:2 │ draining vecchio worker pid 12342...
+[bunpm2] api:2 │ vecchio worker fermato
+[bunpm2] api:3 │ spawning sostituto...
+[bunpm2] api:3 │ nuovo worker pid 12353 online
+[bunpm2] api:3 │ draining vecchio worker pid 12343...
+[bunpm2] api:3 │ vecchio worker fermato
+[bunpm2] Reload completato. 0 errori.
 ```
 
 ---
@@ -617,7 +617,7 @@ $ bunpm reload api
 
 ### 8.1 Formato
 
-`bunpm.config.ts` (primario) con fallback a `bunpm.config.js` e `bunpm.json`.
+`bunpm2.config.ts` (primario) con fallback a `bunpm2.config.js` e `bunpm2.json`.
 
 **Precedenza:**
 ```
@@ -627,8 +627,8 @@ CLI flags  >  Environment variables  >  Config file  >  Defaults
 ### 8.2 Config minimale
 
 ```typescript
-// bunpm.config.ts
-import type { BunpmConfig } from 'bunpm';
+// bunpm2.config.ts
+import type { Bunpm2Config } from 'bunpm2';
 
 export default {
   apps: [{
@@ -637,13 +637,13 @@ export default {
     instances: 'max',
     port: 3000,
   }],
-} satisfies BunpmConfig;
+} satisfies Bunpm2Config;
 ```
 
 ### 8.3 Config completo
 
 ```typescript
-import type { BunpmConfig } from 'bunpm';
+import type { Bunpm2Config } from 'bunpm2';
 
 export default {
   apps: [
@@ -721,11 +721,11 @@ export default {
   ],
 
   daemon: {
-    pidFile: '~/.bunpm/bunpm.pid',
-    socketFile: '~/.bunpm/bunpm.sock',
-    logFile: '~/.bunpm/bunpm-daemon.log',
+    pidFile: '~/.bunpm2/bunpm2.pid',
+    socketFile: '~/.bunpm2/bunpm2.sock',
+    logFile: '~/.bunpm2/bunpm2-daemon.log',
   },
-} satisfies BunpmConfig;
+} satisfies Bunpm2Config;
 ```
 
 ### 8.4 Interfaccia TypeScript completa
@@ -804,7 +804,7 @@ interface AppConfig {
   };
 }
 
-interface BunpmConfig {
+interface Bunpm2Config {
   apps: AppConfig[];
   daemon?: {
     pidFile?: string;
@@ -817,21 +817,21 @@ interface BunpmConfig {
 ### 8.5 Environment variables
 
 ```bash
-BUNPM_HOME=~/.bunpm                    # directory base
-BUNPM_SOCKET=~/.bunpm/bunpm.sock       # socket path
-BUNPM_LOG_LEVEL=info                   # debug | info | warn | error
+BUNPM2_HOME=~/.bunpm2                    # directory base
+BUNPM2_SOCKET=~/.bunpm2/bunpm2.sock       # socket path
+BUNPM2_LOG_LEVEL=info                   # debug | info | warn | error
 ```
 
 ### 8.6 Variabili iniettate nei worker
 
-bunpm inietta queste variabili d'ambiente in ogni worker:
+bunpm2 inietta queste variabili d'ambiente in ogni worker:
 
 ```bash
-BUNPM_WORKER_ID=0                      # 0-based index nel gruppo
-BUNPM_PORT=3000                        # porta da usare
-BUNPM_REUSE_PORT=1                     # "1" su Linux, "0" su macOS
-BUNPM_APP_NAME=api                     # nome dell'app
-BUNPM_INSTANCES=4                      # numero totale worker
+BUNPM2_WORKER_ID=0                      # 0-based index nel gruppo
+BUNPM2_PORT=3000                        # porta da usare
+BUNPM2_REUSE_PORT=1                     # "1" su Linux, "0" su macOS
+BUNPM2_APP_NAME=api                     # nome dell'app
+BUNPM2_INSTANCES=4                      # numero totale worker
 ```
 
 ---
@@ -862,7 +862,7 @@ Client :3000 ──→ Kernel (SO_REUSEPORT) ──→ Worker 0 :3000
 
 **Overhead: zero.** Nessun proxy, nessun hop extra. Il kernel fa tutto.
 
-**Implementazione:** Il master spawna i worker con env `BUNPM_REUSE_PORT=1` e `BUNPM_PORT=3000`. L'app utente (o l'SDK) legge le env e passa `reusePort: true` a `Bun.serve()`.
+**Implementazione:** Il master spawna i worker con env `BUNPM2_REUSE_PORT=1` e `BUNPM2_PORT=3000`. L'app utente (o l'SDK) legge le env e passa `reusePort: true` a `Bun.serve()`.
 
 ### 9.3 macOS: TCP Proxy
 
@@ -1073,7 +1073,7 @@ Crash #15: → stato ERRORED, nessun auto-restart
 - **Default:** `1s * 2^(n-1)`, cap a 30s
 - **Window:** 15 restart in 15 minuti → stato errored
 - **Reset:** se il worker resta attivo per `minUptime` (30s), il contatore crash si resetta
-- **Force restart:** `bunpm restart --force <app>` riavvia anche worker in stato errored
+- **Force restart:** `bunpm2 restart --force <app>` riavvia anche worker in stato errored
 
 ### 11.3 Implementazione
 
@@ -1142,7 +1142,7 @@ interface BackoffState {
 ### 12.1 Algoritmo (rolling restart)
 
 ```
-bunpm reload api
+bunpm2 reload api
   │
   ▼
 [1] Valida
@@ -1263,7 +1263,7 @@ Rotazione:
 ### 13.3 Struttura directory
 
 ```
-~/.bunpm/
+~/.bunpm2/
   logs/
     api/
       api-0-out.log            # stdout corrente worker 0
@@ -1277,7 +1277,7 @@ Rotazione:
       queue-worker-0-out.log
       queue-worker-0-err.log
       ...
-  bunpm-daemon.log             # log del master (daemon mode)
+  bunpm2-daemon.log             # log del master (daemon mode)
 ```
 
 ---
@@ -1335,38 +1335,38 @@ GET /api/status           → stato completo di tutte le app
 ### 14.4 Prometheus Format
 
 ```
-# HELP bunpm_worker_memory_rss_bytes Worker RSS memory in bytes
-# TYPE bunpm_worker_memory_rss_bytes gauge
-bunpm_worker_memory_rss_bytes{app="api",worker="0"} 47382528
-bunpm_worker_memory_rss_bytes{app="api",worker="1"} 45219840
+# HELP bunpm2_worker_memory_rss_bytes Worker RSS memory in bytes
+# TYPE bunpm2_worker_memory_rss_bytes gauge
+bunpm2_worker_memory_rss_bytes{app="api",worker="0"} 47382528
+bunpm2_worker_memory_rss_bytes{app="api",worker="1"} 45219840
 
-# HELP bunpm_worker_cpu_percent Worker CPU usage percentage
-# TYPE bunpm_worker_cpu_percent gauge
-bunpm_worker_cpu_percent{app="api",worker="0"} 2.1
-bunpm_worker_cpu_percent{app="api",worker="1"} 1.8
+# HELP bunpm2_worker_cpu_percent Worker CPU usage percentage
+# TYPE bunpm2_worker_cpu_percent gauge
+bunpm2_worker_cpu_percent{app="api",worker="0"} 2.1
+bunpm2_worker_cpu_percent{app="api",worker="1"} 1.8
 
-# HELP bunpm_worker_restarts_total Total worker restarts
-# TYPE bunpm_worker_restarts_total counter
-bunpm_worker_restarts_total{app="api",worker="0"} 0
-bunpm_worker_restarts_total{app="api",worker="1"} 1
+# HELP bunpm2_worker_restarts_total Total worker restarts
+# TYPE bunpm2_worker_restarts_total counter
+bunpm2_worker_restarts_total{app="api",worker="0"} 0
+bunpm2_worker_restarts_total{app="api",worker="1"} 1
 
-# HELP bunpm_worker_uptime_seconds Worker uptime in seconds
-# TYPE bunpm_worker_uptime_seconds gauge
-bunpm_worker_uptime_seconds{app="api",worker="0"} 8100
-bunpm_worker_uptime_seconds{app="api",worker="1"} 8100
+# HELP bunpm2_worker_uptime_seconds Worker uptime in seconds
+# TYPE bunpm2_worker_uptime_seconds gauge
+bunpm2_worker_uptime_seconds{app="api",worker="0"} 8100
+bunpm2_worker_uptime_seconds{app="api",worker="1"} 8100
 
-# HELP bunpm_app_workers_online Number of online workers
-# TYPE bunpm_app_workers_online gauge
-bunpm_app_workers_online{app="api"} 4
-bunpm_app_workers_online{app="queue-worker"} 2
+# HELP bunpm2_app_workers_online Number of online workers
+# TYPE bunpm2_app_workers_online gauge
+bunpm2_app_workers_online{app="api"} 4
+bunpm2_app_workers_online{app="queue-worker"} 2
 
-# HELP bunpm_app_workers_errored Number of errored workers
-# TYPE bunpm_app_workers_errored gauge
-bunpm_app_workers_errored{app="api"} 0
+# HELP bunpm2_app_workers_errored Number of errored workers
+# TYPE bunpm2_app_workers_errored gauge
+bunpm2_app_workers_errored{app="api"} 0
 
-# HELP bunpm_master_uptime_seconds Master process uptime
-# TYPE bunpm_master_uptime_seconds gauge
-bunpm_master_uptime_seconds 29160
+# HELP bunpm2_master_uptime_seconds Master process uptime
+# TYPE bunpm2_master_uptime_seconds gauge
+bunpm2_master_uptime_seconds 29160
 ```
 
 ---
@@ -1376,7 +1376,7 @@ bunpm_master_uptime_seconds 29160
 ### 15.1 Schema
 
 ```sql
--- ~/.bunpm/bunpm.db
+-- ~/.bunpm2/bunpm2.db
 
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -1479,14 +1479,14 @@ DELETE FROM restart_history
 
 ### 16.1 Transport
 
-Unix domain socket a `~/.bunpm/bunpm.sock`. Il file socket serve anche come check "daemon attivo?" (connessione fallisce = daemon non gira).
+Unix domain socket a `~/.bunpm2/bunpm2.sock`. Il file socket serve anche come check "daemon attivo?" (connessione fallisce = daemon non gira).
 
 ### 16.2 Wire Protocol
 
 **NDJSON** (newline-delimited JSON) su Unix socket stream.
 
 ```
-CLIENT si connette a ~/.bunpm/bunpm.sock
+CLIENT si connette a ~/.bunpm2/bunpm2.sock
 CLIENT invia: {"id":"abc123","cmd":"list","args":{}}\n
 SERVER invia: {"id":"abc123","ok":true,"data":[...]}\n
 CLIENT chiude (o mantiene per streaming)
@@ -1539,7 +1539,7 @@ interface ControlStreamChunk {
 ### 16.5 Perche' NDJSON e non msgpack
 
 Il control plane vede ~10 messaggi/secondo al picco. NDJSON aggiunge ~50μs di overhead per messaggio rispetto a msgpack. In cambio:
-- Human-debuggable: `socat UNIX:~/.bunpm/bunpm.sock -` per debug
+- Human-debuggable: `socat UNIX:~/.bunpm2/bunpm2.sock -` per debug
 - Zero dipendenze: `JSON.parse`/`JSON.stringify` nativi e ottimizzati
 - Bun ottimizza JSON via SIMD internamente
 
@@ -1550,8 +1550,8 @@ Il control plane vede ~10 messaggi/secondo al picco. NDJSON aggiunge ~50μs di o
 ### 17.1 Foreground (default)
 
 ```bash
-bunpm start bunpm.config.ts              # foreground, default
-bunpm start bunpm.config.ts --no-daemon  # esplicito
+bunpm2 start bunpm2.config.ts              # foreground, default
+bunpm2 start bunpm2.config.ts --no-daemon  # esplicito
 ```
 
 Comportamento:
@@ -1567,16 +1567,16 @@ Comportamento:
 ### 17.2 Daemon
 
 ```bash
-bunpm start bunpm.config.ts --daemon
+bunpm2 start bunpm2.config.ts --daemon
 # oppure
-bunpm daemon start
+bunpm2 daemon start
 ```
 
 Comportamento:
 - Master si stacca dal terminale
-- PID file in `~/.bunpm/bunpm.pid`
-- stdout/stderr del master in `~/.bunpm/bunpm-daemon.log`
-- Worker log nei file `~/.bunpm/logs/`
+- PID file in `~/.bunpm2/bunpm2.pid`
+- stdout/stderr del master in `~/.bunpm2/bunpm2-daemon.log`
+- Worker log nei file `~/.bunpm2/logs/`
 - CLI comunica via Unix socket
 
 **Uso tipico:** Server bare metal, VPS, deployment tradizionali.
@@ -1591,7 +1591,7 @@ function daemonize(configPath: string): void {
     cmd: ['bun', 'run', import.meta.dir + '/master.ts',
           '--config', configPath, '--daemonized'],
     stdio: ['ignore', 'ignore', 'ignore'],
-    env: { ...process.env, BUNPM_DAEMON: '1' },
+    env: { ...process.env, BUNPM2_DAEMON: '1' },
   });
 
   // Il figlio unref se stesso dal parent
@@ -1599,7 +1599,7 @@ function daemonize(configPath: string): void {
 
   // Scrivi PID file
   Bun.write(PID_FILE, String(child.pid));
-  console.log(`[bunpm] Daemon avviato, pid ${child.pid}`);
+  console.log(`[bunpm2] Daemon avviato, pid ${child.pid}`);
   process.exit(0);
 }
 ```
@@ -1678,9 +1678,9 @@ Il master NON passa le proprie variabili interne ai worker:
 
 ```typescript
 const INTERNAL_KEYS = new Set([
-  'BUNPM_DAEMON',
-  'BUNPM_CONTROL_SOCKET',
-  'BUNPM_INTERNAL_PORT_BASE',
+  'BUNPM2_DAEMON',
+  'BUNPM2_CONTROL_SOCKET',
+  'BUNPM2_INTERNAL_PORT_BASE',
 ]);
 
 function sanitizeEnv(masterEnv: NodeJS.ProcessEnv, workerEnv: Record<string, string>): Record<string, string> {
@@ -1692,7 +1692,7 @@ function sanitizeEnv(masterEnv: NodeJS.ProcessEnv, workerEnv: Record<string, str
 
 ### 19.3 PID File Safety
 
-- Al startup, controlla se il PID nel file e' un processo bunpm attivo
+- Al startup, controlla se il PID nel file e' un processo bunpm2 attivo
 - `process.kill(pid, 0)` verifica esistenza senza inviare segnali
 - Se il PID e' stale (processo non esiste), sovrascrive il file
 
@@ -1710,7 +1710,7 @@ Messaggi con tipo sconosciuto vengono loggati e scartati. Mai `eval()` sui dati 
 
 ### 19.5 SQLite Safety
 
-- Database `~/.bunpm/bunpm.db` con mode `0o600`
+- Database `~/.bunpm2/bunpm2.db` con mode `0o600`
 - Tutte le query usano prepared statement (injection-safe)
 - WAL mode previene writer starvation
 
@@ -1719,11 +1719,11 @@ Messaggi con tipo sconosciuto vengono loggati e scartati. Mai `eval()` sui dati 
 ## 20. Directory Structure
 
 ```
-bunpm/
+bunpm2/
 ├── package.json
 ├── tsconfig.json
-├── bunpm.config.example.ts
-├── bunpm-design.md
+├── bunpm2.config.example.ts
+├── bunpm2-design.md
 │
 ├── src/
 │   ├── index.ts                          # Entry point, CLI router
@@ -1869,7 +1869,7 @@ bunpm/
 ## 22. Confronto Finale
 
 ```
-                 bunpm              PM2               systemd           Docker
+                 bunpm2              PM2               systemd           Docker
 ──────────────────────────────────────────────────────────────────────────────────
 Runtime          Bun (TS)          Node.js            C                 Go
 Dipendenze       0                 ~150 npm pkgs      OS built-in       Container
@@ -1881,7 +1881,7 @@ Bun support      Nativo            Rotto (cluster)    Manuale           Ok
 Crash recovery   Exp backoff       Fixed delay        Configurable      RestartPolicy
 Health checks    IPC + HTTP        None built-in      Watchdog/HTTP     HTTP/TCP/CMD
 Metrics          Prometheus        PM2 Plus ($)       journald          cAdvisor
-Zero-downtime    bunpm reload      pm2 reload         Manual            Rolling update
+Zero-downtime    bunpm2 reload      pm2 reload         Manual            Rolling update
 Log rotation     Built-in          Built-in           journald          Docker driver
 Foreground       Default           Opzionale          N/A (always bg)   Default
 Daemon           Opzionale         Default            Default           N/A
@@ -1907,12 +1907,12 @@ Obiettivo: singola app, foreground mode, clustering base, crash restart.
 - [ ] Crash recovery con exponential backoff
 - [ ] Signal handling (SIGTERM, SIGINT, SIGHUP)
 - [ ] Cluster: reusePort strategy (Linux)
-- [ ] Worker SDK (bunpmReady, bunpmOnShutdown, bunpmStartMetrics)
+- [ ] Worker SDK (bunpm2Ready, bunpm2OnShutdown, bunpm2StartMetrics)
 - [ ] CLI base: start, stop, list
 - [ ] Foreground mode con log multiplexing
 - [ ] Test: lifecycle, backoff, process manager
 
-**Deliverable:** `bunpm start server.ts -i 4 --port 3000` funziona su Linux. Worker si riavviano al crash. Ctrl+C fa graceful shutdown.
+**Deliverable:** `bunpm2 start server.ts -i 4 --port 3000` funziona su Linux. Worker si riavviano al crash. Ctrl+C fa graceful shutdown.
 
 ### Fase 2: macOS + Control Socket (~1.5 settimane)
 
@@ -1927,7 +1927,7 @@ Obiettivo: clustering su macOS, CLI completa.
 - [ ] Zero-downtime reload (rolling restart)
 - [ ] Test: proxy, control protocol, reload
 
-**Deliverable:** CLI completa. `bunpm reload` fa zero-downtime restart. macOS supportato.
+**Deliverable:** CLI completa. `bunpm2 reload` fa zero-downtime restart. macOS supportato.
 
 ### Fase 3: Persistenza + Logging (~1 settimana)
 
@@ -1974,7 +1974,7 @@ Obiettivo: production-ready, daemon mode, TUI.
 - [ ] Test: integration full lifecycle, crash recovery
 - [ ] Benchmark: spawn time, reload time, memory overhead
 
-**Deliverable:** `bunpm daemon start` funziona. `bunpm monit` mostra dashboard. Pronto per produzione.
+**Deliverable:** `bunpm2 daemon start` funziona. `bunpm2 monit` mostra dashboard. Pronto per produzione.
 
 **Totale stimato: 6-7 settimane**
 
@@ -1989,8 +1989,8 @@ WORKDIR /app
 COPY . .
 RUN bun install
 
-# bunpm come PID 1 in foreground mode
-CMD ["bunpm", "start", "bunpm.config.ts"]
+# bunpm2 come PID 1 in foreground mode
+CMD ["bunpm2", "start", "bunpm2.config.ts"]
 ```
 
-`bunpm` in foreground mode gestisce SIGTERM da Docker/K8s, fa graceful shutdown di tutti i worker, e esce con codice 0.
+`bunpm2` in foreground mode gestisce SIGTERM da Docker/K8s, fa graceful shutdown di tutti i worker, e esce con codice 0.

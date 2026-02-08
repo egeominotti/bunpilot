@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// bunpm – Slow Start Server Fixture
+// bunpm2 – Slow Start Server Fixture
 // ---------------------------------------------------------------------------
 // Simulates a long initialization phase (5s) before signalling readiness.
 // Useful for testing the `readyTimeout` configuration option.
 // ---------------------------------------------------------------------------
 
-import { bunpmReady, bunpmOnShutdown, bunpmStartMetrics } from '../src/sdk/worker';
+import { bunpm2Ready, bunpm2OnShutdown, bunpm2StartMetrics } from '../src/sdk/worker';
 
 const PORT = Number(process.env.PORT) || 3002;
 const STARTUP_DELAY_MS = 5_000;
@@ -31,10 +31,10 @@ async function main() {
 
   console.log(`[slow-start] ready on :${server.port} (pid=${process.pid})`);
 
-  bunpmReady();
-  bunpmStartMetrics();
+  bunpm2Ready();
+  bunpm2StartMetrics();
 
-  bunpmOnShutdown(async () => {
+  bunpm2OnShutdown(async () => {
     console.log('[slow-start] shutting down...');
     server.stop(true);
   });

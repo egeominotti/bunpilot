@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Signal Handler
+// bunpm2 – Signal Handler
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ export function setupSignalHandlers(callbacks: SignalCallbacks): void {
   process.on('SIGPIPE', ignoreHandler);
 
   process.on('unhandledRejection', (reason) => {
-    console.error('[bunpm] unhandled rejection:', reason);
+    console.error('[bunpm2] unhandled rejection:', reason);
   });
 
   registeredHandlers.set('SIGTERM', shutdownHandler);

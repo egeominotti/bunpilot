@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Unit Tests: SqliteStore
+// bunpm2 – Unit Tests: SqliteStore
 // ---------------------------------------------------------------------------
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { SqliteStore } from '../../src/store/sqlite';

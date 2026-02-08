@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Worker Exit / Restart / Stop Helpers
+// bunpm2 – Worker Exit / Restart / Stop Helpers
 // ---------------------------------------------------------------------------
 
 import type { AppConfig, WorkerInfo, WorkerMessage, WorkerState } from '../config/types';

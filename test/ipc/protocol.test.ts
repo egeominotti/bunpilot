@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – IPC Protocol unit tests
+// bunpm2 – IPC Protocol unit tests
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';

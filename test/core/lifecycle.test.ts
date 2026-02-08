@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – WorkerLifecycle Unit Tests
+// bunpm2 – WorkerLifecycle Unit Tests
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect, beforeEach } from 'bun:test';

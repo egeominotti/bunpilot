@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – CLI Command: metrics
+// bunpm2 – CLI Command: metrics
 // ---------------------------------------------------------------------------
 //
 // Retrieve and display application metrics. Supports plain-text, JSON,
@@ -73,15 +73,15 @@ function printPrometheus(apps: AppStatus[]): void {
 
     for (const w of app.workers) {
       if (w.cpu) {
-        lines.push(`bunpm_cpu_percent${labels(w)} ${w.cpu.percentage.toFixed(2)}`);
+        lines.push(`bunpm2_cpu_percent${labels(w)} ${w.cpu.percentage.toFixed(2)}`);
       }
       if (w.memory) {
-        lines.push(`bunpm_memory_rss_bytes${labels(w)} ${w.memory.rss}`);
-        lines.push(`bunpm_memory_heap_used_bytes${labels(w)} ${w.memory.heapUsed}`);
-        lines.push(`bunpm_memory_heap_total_bytes${labels(w)} ${w.memory.heapTotal}`);
-        lines.push(`bunpm_memory_external_bytes${labels(w)} ${w.memory.external}`);
+        lines.push(`bunpm2_memory_rss_bytes${labels(w)} ${w.memory.rss}`);
+        lines.push(`bunpm2_memory_heap_used_bytes${labels(w)} ${w.memory.heapUsed}`);
+        lines.push(`bunpm2_memory_heap_total_bytes${labels(w)} ${w.memory.heapTotal}`);
+        lines.push(`bunpm2_memory_external_bytes${labels(w)} ${w.memory.external}`);
       }
-      lines.push(`bunpm_restart_count${labels(w)} ${w.restartCount}`);
+      lines.push(`bunpm2_restart_count${labels(w)} ${w.restartCount}`);
     }
   }
 

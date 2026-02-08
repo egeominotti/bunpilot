@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// bunpm – Config Validation & Defaults
+// bunpm2 – Config Validation & Defaults
 // ---------------------------------------------------------------------------
 
 import { APP_DEFAULTS } from '../constants';
-import type { AppConfig, BunpmConfig } from './types';
+import type { AppConfig, Bunpm2Config } from './types';
 import {
   assertString,
   isRecord,
@@ -127,15 +127,15 @@ export function validateApp(raw: unknown): AppConfig {
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a full bunpm config (one or more apps).
+ * Validate a full bunpm2 config (one or more apps).
  *
  * The input may be:
  *  - `{ apps: [...] }` (standard multi-app format)
  *  - A single app object (auto-wrapped into `{ apps: [app] }`)
  *
- * Returns a fully validated `BunpmConfig` with defaults applied.
+ * Returns a fully validated `Bunpm2Config` with defaults applied.
  */
-export function validateConfig(raw: unknown): BunpmConfig {
+export function validateConfig(raw: unknown): Bunpm2Config {
   if (!isRecord(raw)) {
     throw new Error('Config must be a plain object.');
   }
@@ -179,7 +179,7 @@ export function validateConfig(raw: unknown): BunpmConfig {
   }
 
   // Daemon config (optional, pass-through).
-  const config: BunpmConfig = { apps };
+  const config: Bunpm2Config = { apps };
 
   if (isRecord(raw.daemon)) {
     config.daemon = {};

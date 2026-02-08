@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Unit Tests for CLI Argument Parser
+// bunpm2 – Unit Tests for CLI Argument Parser
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';

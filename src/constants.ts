@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Global Constants & Defaults
+// bunpm2 – Global Constants & Defaults
 // ---------------------------------------------------------------------------
 
 import { homedir } from 'node:os';
@@ -18,18 +18,18 @@ import type {
 // Paths
 // ---------------------------------------------------------------------------
 
-export const BUNPM_HOME = process.env.BUNPM_HOME ?? join(homedir(), '.bunpm');
-export const SOCKET_PATH = process.env.BUNPM_SOCKET ?? join(BUNPM_HOME, 'bunpm.sock');
-export const PID_FILE = join(BUNPM_HOME, 'bunpm.pid');
-export const DB_PATH = join(BUNPM_HOME, 'bunpm.db');
-export const LOGS_DIR = join(BUNPM_HOME, 'logs');
-export const DAEMON_LOG = join(BUNPM_HOME, 'bunpm-daemon.log');
+export const BUNPM2_HOME = process.env.BUNPM2_HOME ?? join(homedir(), '.bunpm2');
+export const SOCKET_PATH = process.env.BUNPM2_SOCKET ?? join(BUNPM2_HOME, 'bunpm2.sock');
+export const PID_FILE = join(BUNPM2_HOME, 'bunpm2.pid');
+export const DB_PATH = join(BUNPM2_HOME, 'bunpm2.db');
+export const LOGS_DIR = join(BUNPM2_HOME, 'logs');
+export const DAEMON_LOG = join(BUNPM2_HOME, 'bunpm2-daemon.log');
 
 // ---------------------------------------------------------------------------
 // Config File Names (lookup order)
 // ---------------------------------------------------------------------------
 
-export const CONFIG_FILES = ['bunpm.config.ts', 'bunpm.config.js', 'bunpm.json'] as const;
+export const CONFIG_FILES = ['bunpm2.config.ts', 'bunpm2.config.js', 'bunpm2.json'] as const;
 
 // ---------------------------------------------------------------------------
 // Internal
@@ -39,9 +39,9 @@ export const INTERNAL_PORT_BASE = 40_001;
 
 /** Env keys the master uses internally – never leaked to workers */
 export const INTERNAL_ENV_KEYS = new Set([
-  'BUNPM_DAEMON',
-  'BUNPM_CONTROL_SOCKET',
-  'BUNPM_INTERNAL_PORT_BASE',
+  'BUNPM2_DAEMON',
+  'BUNPM2_CONTROL_SOCKET',
+  'BUNPM2_INTERNAL_PORT_BASE',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ export const HEARTBEAT_MISS_THRESHOLD = 3;
 // Home Directory Bootstrap
 // ---------------------------------------------------------------------------
 
-/** Ensure the BUNPM_HOME directory tree exists. */
-export function ensureBunpmHome(): void {
-  mkdirSync(BUNPM_HOME, { recursive: true });
+/** Ensure the BUNPM2_HOME directory tree exists. */
+export function ensureBunpm2Home(): void {
+  mkdirSync(BUNPM2_HOME, { recursive: true });
 }

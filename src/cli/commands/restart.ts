@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – CLI Command: restart
+// bunpm2 – CLI Command: restart
 // ---------------------------------------------------------------------------
 //
 // Restart an application by name. All workers are stopped and re-spawned.

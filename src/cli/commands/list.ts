@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – CLI Command: list
+// bunpm2 – CLI Command: list
 // ---------------------------------------------------------------------------
 //
 // List all managed applications with a summary table showing status,

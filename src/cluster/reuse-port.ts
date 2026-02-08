@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – SO_REUSEPORT Cluster Implementation
+// bunpm2 – SO_REUSEPORT Cluster Implementation
 // ---------------------------------------------------------------------------
 //
 // On Linux the kernel distributes incoming connections across all sockets
@@ -26,13 +26,13 @@ export class ReusePortCluster {
   /**
    * Returns the env vars that the master should inject into a worker process.
    *
-   * - `BUNPM_PORT`       – the public port the worker should bind to.
-   * - `BUNPM_REUSE_PORT` – `'1'` signals the worker to set `reusePort: true`.
+   * - `BUNPM2_PORT`       – the public port the worker should bind to.
+   * - `BUNPM2_REUSE_PORT` – `'1'` signals the worker to set `reusePort: true`.
    */
   getWorkerEnv(workerId: number, port: number): Record<string, string> {
     return {
-      BUNPM_PORT: String(port),
-      BUNPM_REUSE_PORT: '1',
+      BUNPM2_PORT: String(port),
+      BUNPM2_REUSE_PORT: '1',
     };
   }
 

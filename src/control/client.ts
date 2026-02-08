@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Control Client: connects to daemon Unix socket over NDJSON
+// bunpm2 – Control Client: connects to daemon Unix socket over NDJSON
 // ---------------------------------------------------------------------------
 
 import { existsSync } from 'node:fs';
@@ -33,7 +33,7 @@ function isControlResponse(msg: object): msg is ControlResponse {
 // ---------------------------------------------------------------------------
 
 /**
- * Connects to the bunpm daemon over a Unix domain socket, sends a command,
+ * Connects to the bunpm2 daemon over a Unix domain socket, sends a command,
  * and returns the response.  Each `send()` call opens a fresh connection
  * so there is no long-lived state to manage.
  */
@@ -200,7 +200,7 @@ export class ControlClient {
 
   private ensureDaemonRunning(): void {
     if (!isDaemonRunning(this.socketPath)) {
-      throw new Error(`bunpm daemon is not running (socket not found at ${this.socketPath})`);
+      throw new Error(`bunpm2 daemon is not running (socket not found at ${this.socketPath})`);
     }
   }
 }

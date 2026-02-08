@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Master Orchestrator
+// bunpm2 – Master Orchestrator
 // ---------------------------------------------------------------------------
 
 import { cpus } from 'node:os';
@@ -193,7 +193,7 @@ export class MasterOrchestrator {
 
     // Pipe stdout/stderr to log files
     const logsConfig = managed.config.logs ?? DEFAULT_LOGS;
-    const isDaemon = !!process.env.BUNPM_DAEMON;
+    const isDaemon = !!process.env.BUNPM2_DAEMON;
     this.logManager.pipeOutput(
       managed.config.name,
       workerId,
@@ -232,7 +232,7 @@ export class MasterOrchestrator {
 
     // Pipe stdout/stderr to log files
     const logsConfig = managed.config.logs ?? DEFAULT_LOGS;
-    const isDaemon = !!process.env.BUNPM_DAEMON;
+    const isDaemon = !!process.env.BUNPM2_DAEMON;
     this.logManager.pipeOutput(
       managed.config.name,
       worker.id,

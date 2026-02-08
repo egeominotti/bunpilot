@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// bunpm – Sample HTTP Server Fixture
+// bunpm2 – Sample HTTP Server Fixture
 // ---------------------------------------------------------------------------
-// A basic HTTP server demonstrating bunpm SDK integration.
-// Run with: bunpm start fixtures/sample-server.ts
+// A basic HTTP server demonstrating bunpm2 SDK integration.
+// Run with: bunpm2 start fixtures/sample-server.ts
 // ---------------------------------------------------------------------------
 
-import { bunpmReady, bunpmOnShutdown, bunpmStartMetrics } from '../src/sdk/worker';
+import { bunpm2Ready, bunpm2OnShutdown, bunpm2StartMetrics } from '../src/sdk/worker';
 
 const PORT = Number(process.env.PORT) || 3000;
 const startedAt = Date.now();
@@ -35,17 +35,17 @@ const server = Bun.serve({
 console.log(`[sample-server] listening on :${server.port} (pid=${process.pid})`);
 
 // ---------------------------------------------------------------------------
-// bunpm SDK hooks
+// bunpm2 SDK hooks
 // ---------------------------------------------------------------------------
 
-// Signal to bunpm that the worker is ready to accept traffic.
-bunpmReady();
+// Signal to bunpm2 that the worker is ready to accept traffic.
+bunpm2Ready();
 
 // Start periodic metrics reporting (every 5s by default).
-bunpmStartMetrics();
+bunpm2StartMetrics();
 
 // Register graceful shutdown: close the server and drain connections.
-bunpmOnShutdown(async () => {
+bunpm2OnShutdown(async () => {
   console.log('[sample-server] shutting down gracefully...');
   server.stop(true); // close keep-alive connections
   await Bun.sleep(500); // allow in-flight requests to complete

@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// bunpm – Crashing Server Fixture
+// bunpm2 – Crashing Server Fixture
 // ---------------------------------------------------------------------------
 // Deliberately crashes after a random interval (2-10s) to exercise restart /
-// backoff logic in bunpm.
+// backoff logic in bunpm2.
 // ---------------------------------------------------------------------------
 
-import { bunpmReady } from '../src/sdk/worker';
+import { bunpm2Ready } from '../src/sdk/worker';
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -26,8 +26,8 @@ const server = Bun.serve({
 
 console.log(`[crashing-server] listening on :${server.port} – will crash in ~${crashAfterMs}ms`);
 
-// Notify bunpm the worker is ready.
-bunpmReady();
+// Notify bunpm2 the worker is ready.
+bunpm2Ready();
 
 // Schedule the deliberate crash.
 setTimeout(() => {

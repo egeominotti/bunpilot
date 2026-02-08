@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – CLI Argument Parser
+// bunpm2 – CLI Argument Parser
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ const BOOLEAN_FLAGS: Record<string, string> = {
  *
  * Expects the standard Bun/Node layout:
  *   argv[0] = runtime path  (e.g. `/usr/local/bin/bun`)
- *   argv[1] = script path   (e.g. `./bunpm`)
+ *   argv[1] = script path   (e.g. `./bunpm2`)
  *   argv[2+] = user args
  */
 export function parseArgs(argv: string[]): ParsedArgs {

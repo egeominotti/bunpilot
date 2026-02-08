@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Health Checker
+// bunpm2 – Health Checker
 // ---------------------------------------------------------------------------
 //
 // Periodically probes worker HTTP health endpoints and monitors IPC

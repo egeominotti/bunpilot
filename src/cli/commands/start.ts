@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – CLI Command: start
+// bunpm2 – CLI Command: start
 // ---------------------------------------------------------------------------
 //
 // Start an application. Accepts either a script path with inline flags or
@@ -26,18 +26,18 @@ export async function startCommand(
   // ---- Config-file mode ----
   if (flags.config) {
     const configPath = typeof flags.config === 'string' ? flags.config : undefined;
-    const bunpmConfig = await loadConfig(configPath).catch((err) => {
+    const bunpm2Config = await loadConfig(configPath).catch((err) => {
       logError(err instanceof Error ? err.message : String(err));
       process.exit(1);
     });
 
-    if (bunpmConfig.apps.length === 0) {
+    if (bunpm2Config.apps.length === 0) {
       logError('No apps defined in config file');
       process.exit(1);
     }
 
     // Start all apps from the config
-    for (const app of bunpmConfig.apps) {
+    for (const app of bunpm2Config.apps) {
       log('start', `Starting "${app.name}" ...`);
       await sendCommand('start', { name: app.name, config: app }, { silent: true });
       logSuccess(`"${app.name}" started`);
@@ -49,7 +49,7 @@ export async function startCommand(
   const script = args[0];
   if (!script) {
     logError('Missing required argument: <script>');
-    console.error('Usage: bunpm start <script> [--name app] [--instances 4] [--port 3000]');
+    console.error('Usage: bunpm2 start <script> [--name app] [--instances 4] [--port 3000]');
     process.exit(1);
   }
 

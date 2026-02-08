@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Validation Helpers & Sub-Config Validators
+// bunpm2 – Validation Helpers & Sub-Config Validators
 // ---------------------------------------------------------------------------
 
 import {

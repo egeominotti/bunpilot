@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – TCP Proxy Cluster (macOS / non-reusePort platforms)
+// bunpm2 – TCP Proxy Cluster (macOS / non-reusePort platforms)
 // ---------------------------------------------------------------------------
 //
 // On platforms where SO_REUSEPORT doesn't distribute connections (e.g. macOS)
@@ -110,8 +110,8 @@ export class ProxyCluster {
    */
   getWorkerEnv(workerId: number, _port: number): Record<string, string> {
     return {
-      BUNPM_PORT: String(INTERNAL_PORT_BASE + workerId),
-      BUNPM_REUSE_PORT: '0',
+      BUNPM2_PORT: String(INTERNAL_PORT_BASE + workerId),
+      BUNPM2_REUSE_PORT: '0',
     };
   }
 

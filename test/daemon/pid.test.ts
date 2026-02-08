@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Unit Tests for Daemon PID Utilities
+// bunpm2 – Unit Tests for Daemon PID Utilities
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -22,7 +22,7 @@ import {
 let tempDir: string;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), 'bunpm-pid-test-'));
+  tempDir = mkdtempSync(join(tmpdir(), 'bunpm2-pid-test-'));
 });
 
 afterEach(() => {

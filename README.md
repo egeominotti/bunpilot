@@ -1,4 +1,4 @@
-# bunpm
+# bunpm2
 
 **Bun-native process manager. PM2 for the Bun ecosystem.**
 
@@ -17,7 +17,7 @@ A production-grade process manager built from the ground up for [Bun](https://bu
 - **Persistent State** — SQLite (WAL mode) stores apps, workers, restart history, and metrics
 - **Graceful Shutdown** — Configurable signal + timeout with SIGKILL escalation
 - **Daemon Mode** — Background process with Unix socket IPC (NDJSON protocol)
-- **TypeScript Config** — First-class `bunpm.config.ts` support with full type safety
+- **TypeScript Config** — First-class `bunpm2.config.ts` support with full type safety
 
 ---
 
@@ -31,10 +31,10 @@ A production-grade process manager built from the ground up for [Bun](https://bu
 
 ```bash
 # Clone and build
-git clone https://github.com/egeominotti/bunpm.git
-cd bunpm
+git clone https://github.com/egeominotti/bunpm2.git
+cd bunpm2
 bun install
-bun run build    # Produces a single ./bunpm binary
+bun run build    # Produces a single ./bunpm2 binary
 ```
 
 ---
@@ -45,40 +45,40 @@ bun run build    # Produces a single ./bunpm binary
 
 ```bash
 # Start a single script
-bunpm start ./src/server.ts --name api
+bunpm2 start ./src/server.ts --name api
 
 # Start with clustering (4 workers)
-bunpm start ./src/server.ts --name api --instances 4 --port 3000
+bunpm2 start ./src/server.ts --name api --instances 4 --port 3000
 
 # Start from config file
-bunpm start --config bunpm.config.ts
+bunpm2 start --config bunpm2.config.ts
 ```
 
 ### 2. Manage processes
 
 ```bash
-bunpm list                # List all processes
-bunpm status api          # Detailed info for a specific app
-bunpm logs api            # Stream logs
-bunpm metrics             # Live CPU/memory dashboard
+bunpm2 list                # List all processes
+bunpm2 status api          # Detailed info for a specific app
+bunpm2 logs api            # Stream logs
+bunpm2 metrics             # Live CPU/memory dashboard
 ```
 
 ### 3. Lifecycle operations
 
 ```bash
-bunpm restart api         # Stop + start
-bunpm reload api          # Zero-downtime rolling restart
-bunpm stop api            # Graceful stop
-bunpm delete api          # Stop and remove
+bunpm2 restart api         # Stop + start
+bunpm2 reload api          # Zero-downtime rolling restart
+bunpm2 stop api            # Graceful stop
+bunpm2 delete api          # Stop and remove
 ```
 
 ### 4. Daemon management
 
 ```bash
-bunpm daemon start        # Start the background daemon
-bunpm daemon stop         # Stop the daemon
-bunpm daemon status       # Check daemon health
-bunpm ping                # Verify daemon responsiveness
+bunpm2 daemon start        # Start the background daemon
+bunpm2 daemon stop         # Stop the daemon
+bunpm2 daemon status       # Check daemon health
+bunpm2 ping                # Verify daemon responsiveness
 ```
 
 ---
@@ -88,15 +88,15 @@ bunpm ping                # Verify daemon responsiveness
 Generate an example config:
 
 ```bash
-bunpm init
+bunpm2 init
 ```
 
-This creates a `bunpm.config.ts` file:
+This creates a `bunpm2.config.ts` file:
 
 ```typescript
-import type { BunpmConfig } from './src/config/types';
+import type { Bunpm2Config } from './src/config/types';
 
-const config: BunpmConfig = {
+const config: Bunpm2Config = {
   apps: [
     {
       name: 'api-server',
@@ -153,9 +153,9 @@ const config: BunpmConfig = {
   ],
 
   daemon: {
-    pidFile: './bunpm.pid',
-    socketFile: './bunpm.sock',
-    logFile: './logs/bunpm-daemon.log',
+    pidFile: './bunpm2.pid',
+    socketFile: './bunpm2.sock',
+    logFile: './logs/bunpm2-daemon.log',
   },
 };
 
@@ -178,7 +178,7 @@ export default config;
 | `minUptime` | `number` | `30_000` | Min uptime to reset crash counter (ms) |
 | `killTimeout` | `number` | `5_000` | Force-kill timeout (ms) |
 | `shutdownSignal` | `'SIGTERM' \| 'SIGINT'` | `'SIGTERM'` | Graceful shutdown signal |
-| `readyTimeout` | `number` | `30_000` | Max wait for `bunpmReady()` (ms) |
+| `readyTimeout` | `number` | `30_000` | Max wait for `bunpm2Ready()` (ms) |
 
 ### Clustering Strategies
 
@@ -192,27 +192,27 @@ export default config;
 
 ## Worker SDK
 
-Integrate your application with bunpm using the worker SDK:
+Integrate your application with bunpm2 using the worker SDK:
 
 ```typescript
-import { bunpmReady, bunpmOnShutdown, bunpmStartMetrics } from 'bunpm/worker';
+import { bunpm2Ready, bunpm2OnShutdown, bunpm2StartMetrics } from 'bunpm2/worker';
 
 // Start your server
 const server = Bun.serve({
-  port: process.env.BUNPM_PORT ?? 3000,
+  port: process.env.BUNPM2_PORT ?? 3000,
   fetch(req) {
     return new Response('Hello!');
   },
 });
 
 // Signal that the worker is ready to accept traffic
-bunpmReady();
+bunpm2Ready();
 
 // Start periodic metrics reporting (every 5s)
-bunpmStartMetrics(5_000);
+bunpm2StartMetrics(5_000);
 
 // Handle graceful shutdown
-bunpmOnShutdown(async () => {
+bunpm2OnShutdown(async () => {
   server.stop(true);
 });
 ```
@@ -221,31 +221,31 @@ bunpmOnShutdown(async () => {
 
 | Function | Description |
 |---|---|
-| `bunpmReady()` | Notify master that the worker is online and ready |
-| `bunpmOnShutdown(handler)` | Register async cleanup handler for graceful shutdown |
-| `bunpmStartMetrics(interval?)` | Start periodic CPU/memory reporting (default: 5000ms) |
+| `bunpm2Ready()` | Notify master that the worker is online and ready |
+| `bunpm2OnShutdown(handler)` | Register async cleanup handler for graceful shutdown |
+| `bunpm2StartMetrics(interval?)` | Start periodic CPU/memory reporting (default: 5000ms) |
 
 ### Worker Environment Variables
 
-bunpm injects these environment variables into each worker:
+bunpm2 injects these environment variables into each worker:
 
 | Variable | Description |
 |---|---|
-| `BUNPM_WORKER_ID` | Worker index (0-based) |
-| `BUNPM_PORT` | Port the worker should bind to |
-| `BUNPM_REUSE_PORT` | `'1'` if using `reusePort` strategy |
-| `BUNPM_APP_NAME` | Application name |
-| `BUNPM_INSTANCES` | Total number of instances |
+| `BUNPM2_WORKER_ID` | Worker index (0-based) |
+| `BUNPM2_PORT` | Port the worker should bind to |
+| `BUNPM2_REUSE_PORT` | `'1'` if using `reusePort` strategy |
+| `BUNPM2_APP_NAME` | Application name |
+| `BUNPM2_INSTANCES` | Total number of instances |
 
 ---
 
 ## CLI Reference
 
 ```
-bunpm — Bun-native process manager
+bunpm2 — Bun-native process manager
 
 Usage:
-  bunpm <command> [args] [flags]
+  bunpm2 <command> [args] [flags]
 
 Process Commands:
   start <script|config>      Start a process (or cluster)
@@ -295,19 +295,19 @@ metrics: {
 Exposed metrics:
 
 ```
-bunpm_worker_memory_rss_bytes{app="api-server",worker="0"} 52428800
-bunpm_worker_memory_heap_used_bytes{app="api-server",worker="0"} 31457280
-bunpm_worker_cpu_percent{app="api-server",worker="0"} 2.5
-bunpm_worker_restart_count{app="api-server",worker="0"} 0
-bunpm_master_uptime_seconds{app="api-server"} 3600
+bunpm2_worker_memory_rss_bytes{app="api-server",worker="0"} 52428800
+bunpm2_worker_memory_heap_used_bytes{app="api-server",worker="0"} 31457280
+bunpm2_worker_cpu_percent{app="api-server",worker="0"} 2.5
+bunpm2_worker_restart_count{app="api-server",worker="0"} 0
+bunpm2_master_uptime_seconds{app="api-server"} 3600
 ```
 
 ### CLI Dashboard
 
 ```bash
-bunpm metrics              # Table view
-bunpm metrics --json       # JSON output
-bunpm metrics --prometheus # Prometheus format
+bunpm2 metrics              # Table view
+bunpm2 metrics --json       # JSON output
+bunpm2 metrics --prometheus # Prometheus format
 ```
 
 ---
@@ -316,7 +316,7 @@ bunpm metrics --prometheus # Prometheus format
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                   bunpm CLI                       │
+│                   bunpm2 CLI                       │
 │         (Unix socket + NDJSON protocol)           │
 └──────────────┬───────────────────────────────────┘
                │

@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
-// bunpm – Config File Loader
+// bunpm2 – Config File Loader
 // ---------------------------------------------------------------------------
 
 import { resolve, join, extname } from 'node:path';
 import { CONFIG_FILES } from '../constants';
-import type { BunpmConfig, AppConfig } from './types';
+import type { Bunpm2Config, AppConfig } from './types';
 import { validateConfig, validateApp } from './validator';
 
 // ---------------------------------------------------------------------------
@@ -70,15 +70,15 @@ async function loadRawConfig(absolutePath: string): Promise<unknown> {
 // ---------------------------------------------------------------------------
 
 /**
- * Load and validate a bunpm config.
+ * Load and validate a bunpm2 config.
  *
  * @param configPath - Explicit path to a config file. When omitted the
  *   current working directory is searched for the standard config filenames
- *   (bunpm.config.ts, bunpm.config.js, bunpm.json) in that order.
+ *   (bunpm2.config.ts, bunpm2.config.js, bunpm2.json) in that order.
  *
- * @returns A fully validated `BunpmConfig` with all defaults applied.
+ * @returns A fully validated `Bunpm2Config` with all defaults applied.
  */
-export async function loadConfig(configPath?: string): Promise<BunpmConfig> {
+export async function loadConfig(configPath?: string): Promise<Bunpm2Config> {
   let resolvedPath: string;
 
   if (configPath) {
@@ -116,7 +116,7 @@ export interface CLIArgs {
  * Build a validated `AppConfig` from CLI flags.
  *
  * This is used when the user starts a script directly from the CLI
- * (e.g. `bunpm start app.ts --instances 4 --port 3000`) instead of
+ * (e.g. `bunpm2 start app.ts --instances 4 --port 3000`) instead of
  * providing a config file.
  */
 export function loadFromCLI(args: CLIArgs): AppConfig {

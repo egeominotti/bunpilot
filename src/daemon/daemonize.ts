@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Daemonization: fork master into background
+// bunpm2 – Daemonization: fork master into background
 // ---------------------------------------------------------------------------
 
 import { resolve } from 'node:path';
@@ -26,7 +26,7 @@ export function daemonize(configPath: string): void {
     stdio: ['ignore', 'ignore', 'ignore'],
     env: {
       ...process.env,
-      BUNPM_DAEMON: '1',
+      BUNPM2_DAEMON: '1',
     },
   });
 
@@ -35,7 +35,7 @@ export function daemonize(configPath: string): void {
   writePidFile(PID_FILE, pid);
   child.unref();
 
-  console.log(`bunpm daemon started (pid ${pid})`);
+  console.log(`bunpm2 daemon started (pid ${pid})`);
   process.exit(0);
 }
 

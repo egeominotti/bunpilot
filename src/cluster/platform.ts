@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Cluster Strategy Detection
+// bunpm2 – Cluster Strategy Detection
 // ---------------------------------------------------------------------------
 
 import type { ClusterStrategy } from '../config/types';

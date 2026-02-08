@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – HealthChecker unit tests
+// bunpm2 – HealthChecker unit tests
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect, beforeEach } from 'bun:test';

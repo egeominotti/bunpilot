@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Control Protocol: NDJSON encoding/decoding & message factories
+// bunpm2 – Control Protocol: NDJSON encoding/decoding & message factories
 // ---------------------------------------------------------------------------
 
 import type { ControlRequest, ControlResponse, ControlStreamChunk } from '../config/types';

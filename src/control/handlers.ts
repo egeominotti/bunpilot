@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Control Handlers: maps CLI commands to daemon actions
+// bunpm2 – Control Handlers: maps CLI commands to daemon actions
 // ---------------------------------------------------------------------------
 
 import type { ControlResponse, AppStatus } from '../config/types';

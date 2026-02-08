@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – MetricsAggregator unit tests
+// bunpm2 – MetricsAggregator unit tests
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect, beforeEach } from 'bun:test';

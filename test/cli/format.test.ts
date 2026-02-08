@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Unit Tests for CLI Format Utilities
+// bunpm2 – Unit Tests for CLI Format Utilities
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';

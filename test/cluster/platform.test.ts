@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Unit Tests for Cluster Platform Detection
+// bunpm2 – Unit Tests for Cluster Platform Detection
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';

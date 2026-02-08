@@ -67,10 +67,10 @@ jobs:
         run: bun run build
 
       - name: Verify binary
-        run: ./bunpm --version || true
+        run: ./bunpm2 --version || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bunpm-linux
-          path: bunpm
+          name: bunpm2-linux
+          path: bunpm2

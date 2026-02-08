@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm – Config Module Barrel Export
+// bunpm2 – Config Module Barrel Export
 // ---------------------------------------------------------------------------
 
 export { loadConfig, loadFromCLI } from './loader';
@@ -10,7 +10,7 @@ export { validateConfig, validateApp, resolveInstances } from './validator';
 export type {
   AppConfig,
   BackoffConfig,
-  BunpmConfig,
+  Bunpm2Config,
   ClusteringConfig,
   ClusterStrategy,
   DaemonConfig,
