@@ -6,7 +6,7 @@ Guidelines for Claude Code when working on this project.
 
 ## Project Overview
 
-**bunpm2** is a Bun-native process manager (PM2 for Bun). It manages application lifecycle, clustering, health checks, metrics, and log rotation — all using Bun-native APIs with zero npm runtime dependencies.
+**bunpilot** is a Bun-native process manager (PM2 for Bun). It manages application lifecycle, clustering, health checks, metrics, and log rotation — all using Bun-native APIs with zero npm runtime dependencies.
 
 - **Runtime:** Bun >= 1.0
 - **Language:** TypeScript (strict mode)
@@ -36,7 +36,7 @@ src/
 │   ├── format.ts         # formatTable, formatUptime, formatMemory, etc.
 │   └── commands/         # One file per command (start, stop, list, etc.)
 ├── config/               # Config loading & validation
-│   ├── types.ts          # All TypeScript interfaces (AppConfig, Bunpm2Config, etc.)
+│   ├── types.ts          # All TypeScript interfaces (AppConfig, BunpilotConfig, etc.)
 │   ├── loader.ts         # Config file discovery & loading
 │   ├── validator.ts      # validateConfig, validateApp, resolveInstances
 │   └── validate-helpers.ts  # Sub-validators (backoff, health, logs, etc.)
@@ -71,7 +71,7 @@ src/
 ├── daemon/
 │   ├── daemonize.ts      # Background process spawning
 │   └── pid.ts            # PID file read/write/cleanup
-├── sdk/worker.ts         # Public API: bunpm2Ready, bunpm2OnShutdown, bunpm2StartMetrics
+├── sdk/worker.ts         # Public API: bunpilotReady, bunpilotOnShutdown, bunpilotStartMetrics
 └── store/sqlite.ts       # SQLite persistence (apps, workers, metrics, restarts)
 ```
 
@@ -82,7 +82,7 @@ src/
 All domain types live in `src/config/types.ts`:
 
 - `AppConfig` — Full app configuration with all fields
-- `Bunpm2Config` — Top-level config (`apps[]` + optional `daemon`)
+- `BunpilotConfig` — Top-level config (`apps[]` + optional `daemon`)
 - `WorkerState` — `'spawning' | 'starting' | 'online' | 'draining' | 'stopping' | 'stopped' | 'crashed' | 'errored'`
 - `WorkerInfo` — Runtime worker state (pid, metrics, restart count)
 - `WorkerMessage` / `MasterMessage` — IPC message types
@@ -111,7 +111,7 @@ bun run scripts/simulate.ts           # Full module simulation (20 checks)
 bun run scripts/simulate-cluster.ts   # Cluster simulation (14 checks)
 
 # Build
-bun run build             # Compile to single binary ./bunpm2
+bun run build             # Compile to single binary ./bunpilot
 ```
 
 ---

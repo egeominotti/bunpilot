@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Unit Tests for Validation Helpers
+// bunpilot – Unit Tests for Validation Helpers
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – PID File Utilities
+// bunpilot – PID File Utilities
 // ---------------------------------------------------------------------------
 
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Metrics Aggregator
+// bunpilot – Metrics Aggregator
 // ---------------------------------------------------------------------------
 
 import type { WorkerMetricsPayload } from '../config/types';

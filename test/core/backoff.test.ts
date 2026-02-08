@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – CrashRecovery Unit Tests
+// bunpilot – CrashRecovery Unit Tests
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect, beforeEach } from 'bun:test';

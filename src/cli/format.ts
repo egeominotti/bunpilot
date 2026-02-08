@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Output Formatting Utilities
+// bunpilot – Output Formatting Utilities
 // ---------------------------------------------------------------------------
 
 import type { WorkerState } from '../config/types';
@@ -127,17 +127,17 @@ export function formatState(state: WorkerState): string {
 // Logging
 // ---------------------------------------------------------------------------
 
-const PREFIX = `${BOLD}[bunpm2]${RESET}`;
+const PREFIX = `${BOLD}[bunpilot]${RESET}`;
 
 /**
- * Formatted log output: `[bunpm2] prefix | message`
+ * Formatted log output: `[bunpilot] prefix | message`
  */
 export function log(prefix: string, message: string): void {
   console.log(`${PREFIX} ${GREEN}${prefix}${RESET} \u2502 ${message}`);
 }
 
 /**
- * Formatted error output: `[bunpm2] ERROR | message`
+ * Formatted error output: `[bunpilot] ERROR | message`
  */
 export function logError(message: string): void {
   console.error(`${PREFIX} ${RED}ERROR${RESET} \u2502 ${message}`);

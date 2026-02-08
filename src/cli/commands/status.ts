@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – CLI Command: status
+// bunpilot – CLI Command: status
 // ---------------------------------------------------------------------------
 //
 // Show detailed status for a single application including its configuration

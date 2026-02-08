@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Worker SDK: public API for user applications
+// bunpilot – Worker SDK: public API for user applications
 // ---------------------------------------------------------------------------
 //
 // Usage:
-//   import { bunpm2Ready, bunpm2OnShutdown, bunpm2StartMetrics } from 'bunpm2/worker';
+//   import { bunpilotReady, bunpilotOnShutdown, bunpilotStartMetrics } from 'bunpilot/worker';
 //
 // ---------------------------------------------------------------------------
 
@@ -21,19 +21,19 @@ function send(message: WorkerMessage): void {
 }
 
 // ---------------------------------------------------------------------------
-// bunpm2Ready
+// bunpilotReady
 // ---------------------------------------------------------------------------
 
 /**
  * Notify the master that this worker is ready to accept traffic.
  * Must be called after all initialization is complete (server listening, etc.).
  */
-export function bunpm2Ready(): void {
+export function bunpilotReady(): void {
   send({ type: 'ready' });
 }
 
 // ---------------------------------------------------------------------------
-// bunpm2OnShutdown
+// bunpilotOnShutdown
 // ---------------------------------------------------------------------------
 
 /**
@@ -42,7 +42,7 @@ export function bunpm2Ready(): void {
  * When the master sends a `shutdown` message, the provided handler is invoked.
  * The handler may return a Promise for async cleanup (e.g. draining connections).
  */
-export function bunpm2OnShutdown(handler: () => Promise<void> | void): void {
+export function bunpilotOnShutdown(handler: () => Promise<void> | void): void {
   if (typeof process.on !== 'function') return;
 
   process.on('message', async (msg: unknown) => {
@@ -57,7 +57,7 @@ export function bunpm2OnShutdown(handler: () => Promise<void> | void): void {
 }
 
 // ---------------------------------------------------------------------------
-// bunpm2StartMetrics
+// bunpilotStartMetrics
 // ---------------------------------------------------------------------------
 
 /** Active metrics interval handle – kept for cleanup. */
@@ -68,7 +68,7 @@ let metricsTimer: ReturnType<typeof setInterval> | null = null;
  *
  * @param interval - Reporting interval in milliseconds (default 5000).
  */
-export function bunpm2StartMetrics(interval: number = 5_000): void {
+export function bunpilotStartMetrics(interval: number = 5_000): void {
   // Avoid duplicate intervals
   if (metricsTimer !== null) return;
 

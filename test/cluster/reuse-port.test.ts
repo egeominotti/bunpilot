@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Unit Tests for ReusePortCluster
+// bunpilot – Unit Tests for ReusePortCluster
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';
@@ -13,14 +13,14 @@ describe('ReusePortCluster', () => {
   const cluster = new ReusePortCluster();
 
   describe('getWorkerEnv', () => {
-    test('returns BUNPM2_PORT as a string of the given port', () => {
+    test('returns BUNPILOT_PORT as a string of the given port', () => {
       const env = cluster.getWorkerEnv(1, 3000);
-      expect(env.BUNPM2_PORT).toBe('3000');
+      expect(env.BUNPILOT_PORT).toBe('3000');
     });
 
-    test('returns BUNPM2_REUSE_PORT set to "1"', () => {
+    test('returns BUNPILOT_REUSE_PORT set to "1"', () => {
       const env = cluster.getWorkerEnv(1, 3000);
-      expect(env.BUNPM2_REUSE_PORT).toBe('1');
+      expect(env.BUNPILOT_REUSE_PORT).toBe('1');
     });
 
     test('returns an object with exactly two keys', () => {
@@ -30,7 +30,7 @@ describe('ReusePortCluster', () => {
 
     test('uses the correct port for different values', () => {
       const env = cluster.getWorkerEnv(2, 9090);
-      expect(env.BUNPM2_PORT).toBe('9090');
+      expect(env.BUNPILOT_PORT).toBe('9090');
     });
   });
 

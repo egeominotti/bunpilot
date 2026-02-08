@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // ---------------------------------------------------------------------------
-// bunpm2 – Full Simulation Script
+// bunpilot – Full Simulation Script
 // ---------------------------------------------------------------------------
 //
 // Tests the core modules in isolation to verify they work correctly.
@@ -304,7 +304,7 @@ check('CRUD operations', () => {
 section('Log Writer & Rotation');
 
 await checkAsync('write and rotate logs', async () => {
-  const tmpDir = join(tmpdir(), `bunpm2-sim-logs-${Date.now()}`);
+  const tmpDir = join(tmpdir(), `bunpilot-sim-logs-${Date.now()}`);
   mkdirSync(tmpDir, { recursive: true });
 
   const logPath = join(tmpDir, 'test.log');
@@ -356,9 +356,9 @@ check('aggregate and format prometheus', () => {
     },
   ]);
 
-  assert(output.includes('bunpm2_worker_memory_rss_bytes'), 'Should contain RSS metric');
-  assert(output.includes('bunpm2_worker_cpu_percent'), 'Should contain CPU metric');
-  assert(output.includes('bunpm2_master_uptime_seconds'), 'Should contain master uptime');
+  assert(output.includes('bunpilot_worker_memory_rss_bytes'), 'Should contain RSS metric');
+  assert(output.includes('bunpilot_worker_cpu_percent'), 'Should contain CPU metric');
+  assert(output.includes('bunpilot_master_uptime_seconds'), 'Should contain master uptime');
   assert(output.includes('test-app'), 'Should contain app name');
 });
 
@@ -389,7 +389,7 @@ check('response creation', () => {
 section('Control Server & Client');
 
 await checkAsync('server accepts connections and responds', async () => {
-  const tmpDir = join(tmpdir(), `bunpm2-sim-sock-${Date.now()}`);
+  const tmpDir = join(tmpdir(), `bunpilot-sim-sock-${Date.now()}`);
   mkdirSync(tmpDir, { recursive: true });
   const socketPath = join(tmpDir, 'test.sock');
 

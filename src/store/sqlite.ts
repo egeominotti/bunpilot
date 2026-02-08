@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – SQLite Store: persistent state for apps, workers, and metrics
+// bunpilot – SQLite Store: persistent state for apps, workers, and metrics
 // ---------------------------------------------------------------------------
 
 import { Database } from 'bun:sqlite';

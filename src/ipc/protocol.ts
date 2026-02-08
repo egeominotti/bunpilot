@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – IPC Protocol: validation and message factories
+// bunpilot – IPC Protocol: validation and message factories
 // ---------------------------------------------------------------------------
 
 import type { WorkerMessage, MasterMessage } from '../config/types';

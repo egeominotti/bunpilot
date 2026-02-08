@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – CLI Command: reload
+// bunpilot – CLI Command: reload
 // ---------------------------------------------------------------------------
 //
 // Graceful zero-downtime reload. Workers are replaced one (or batch) at a

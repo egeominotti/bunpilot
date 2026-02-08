@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Global Constants & Defaults
+// bunpilot – Global Constants & Defaults
 // ---------------------------------------------------------------------------
 
 import { homedir } from 'node:os';
@@ -18,18 +18,18 @@ import type {
 // Paths
 // ---------------------------------------------------------------------------
 
-export const BUNPM2_HOME = process.env.BUNPM2_HOME ?? join(homedir(), '.bunpm2');
-export const SOCKET_PATH = process.env.BUNPM2_SOCKET ?? join(BUNPM2_HOME, 'bunpm2.sock');
-export const PID_FILE = join(BUNPM2_HOME, 'bunpm2.pid');
-export const DB_PATH = join(BUNPM2_HOME, 'bunpm2.db');
-export const LOGS_DIR = join(BUNPM2_HOME, 'logs');
-export const DAEMON_LOG = join(BUNPM2_HOME, 'bunpm2-daemon.log');
+export const BUNPILOT_HOME = process.env.BUNPILOT_HOME ?? join(homedir(), '.bunpilot');
+export const SOCKET_PATH = process.env.BUNPILOT_SOCKET ?? join(BUNPILOT_HOME, 'bunpilot.sock');
+export const PID_FILE = join(BUNPILOT_HOME, 'bunpilot.pid');
+export const DB_PATH = join(BUNPILOT_HOME, 'bunpilot.db');
+export const LOGS_DIR = join(BUNPILOT_HOME, 'logs');
+export const DAEMON_LOG = join(BUNPILOT_HOME, 'bunpilot-daemon.log');
 
 // ---------------------------------------------------------------------------
 // Config File Names (lookup order)
 // ---------------------------------------------------------------------------
 
-export const CONFIG_FILES = ['bunpm2.config.ts', 'bunpm2.config.js', 'bunpm2.json'] as const;
+export const CONFIG_FILES = ['bunpilot.config.ts', 'bunpilot.config.js', 'bunpilot.json'] as const;
 
 // ---------------------------------------------------------------------------
 // Internal
@@ -39,9 +39,9 @@ export const INTERNAL_PORT_BASE = 40_001;
 
 /** Env keys the master uses internally – never leaked to workers */
 export const INTERNAL_ENV_KEYS = new Set([
-  'BUNPM2_DAEMON',
-  'BUNPM2_CONTROL_SOCKET',
-  'BUNPM2_INTERNAL_PORT_BASE',
+  'BUNPILOT_DAEMON',
+  'BUNPILOT_CONTROL_SOCKET',
+  'BUNPILOT_INTERNAL_PORT_BASE',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ export const HEARTBEAT_MISS_THRESHOLD = 3;
 // Home Directory Bootstrap
 // ---------------------------------------------------------------------------
 
-/** Ensure the BUNPM2_HOME directory tree exists. */
-export function ensureBunpm2Home(): void {
-  mkdirSync(BUNPM2_HOME, { recursive: true });
+/** Ensure the BUNPILOT_HOME directory tree exists. */
+export function ensureBunpilotHome(): void {
+  mkdirSync(BUNPILOT_HOME, { recursive: true });
 }

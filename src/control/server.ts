@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Control Server: Unix-socket NDJSON server for CLI <-> daemon
+// bunpilot – Control Server: Unix-socket NDJSON server for CLI <-> daemon
 // ---------------------------------------------------------------------------
 
 import { unlinkSync, chmodSync, existsSync } from 'node:fs';

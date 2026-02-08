@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Rolling Restart / Reload Handler
+// bunpilot – Rolling Restart / Reload Handler
 // ---------------------------------------------------------------------------
 
 import type { AppConfig, WorkerInfo } from '../config/types';

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – CLI Command: ping
+// bunpilot – CLI Command: ping
 // ---------------------------------------------------------------------------
 //
 // Check whether the daemon is alive and responsive. Prints the round-trip

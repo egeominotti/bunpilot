@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Configuration & Domain Types
+// bunpilot – Configuration & Domain Types
 // ---------------------------------------------------------------------------
 
 /** Worker lifecycle states */
@@ -190,7 +190,7 @@ export interface DaemonConfig {
   logFile?: string;
 }
 
-export interface Bunpm2Config {
+export interface BunpilotConfig {
   apps: AppConfig[];
   daemon?: DaemonConfig;
 }

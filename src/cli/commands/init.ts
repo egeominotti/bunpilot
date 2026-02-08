@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – CLI Command: init
+// bunpilot – CLI Command: init
 // ---------------------------------------------------------------------------
 //
-// Generate an example bunpm2.config.ts in the current working directory.
+// Generate an example bunpilot.config.ts in the current working directory.
 // ---------------------------------------------------------------------------
 
 import { join } from 'node:path';
@@ -12,9 +12,9 @@ import { logSuccess, logWarn } from '../format';
 // Template
 // ---------------------------------------------------------------------------
 
-const CONFIG_TEMPLATE = `import type { Bunpm2Config } from 'bunpm2';
+const CONFIG_TEMPLATE = `import type { BunpilotConfig } from 'bunpilot';
 
-const config: Bunpm2Config = {
+const config: BunpilotConfig = {
   apps: [
     {
       name: 'my-app',
@@ -39,7 +39,7 @@ export async function initCommand(
   _args: string[],
   _flags: Record<string, string | boolean>,
 ): Promise<void> {
-  const dest = join(process.cwd(), 'bunpm2.config.ts');
+  const dest = join(process.cwd(), 'bunpilot.config.ts');
 
   // Guard against overwriting an existing config
   const file = Bun.file(dest);

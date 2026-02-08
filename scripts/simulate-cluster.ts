@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // ---------------------------------------------------------------------------
-// bunpm2 – Cluster Simulation Script
+// bunpilot – Cluster Simulation Script
 // ---------------------------------------------------------------------------
 //
 // Spawns multiple workers via ProcessManager, wires up ProxyCluster to
@@ -40,7 +40,7 @@ const PUBLIC_PORT = 18800;
 const INTERNAL_PORT_BASE = 40_001; // Must match src/constants.ts
 const scriptPath = join(import.meta.dir, 'http-server.ts');
 
-console.log(`\n${BOLD}=== bunpm2 Cluster Simulation ===${RESET}`);
+console.log(`\n${BOLD}=== bunpilot Cluster Simulation ===${RESET}`);
 console.log(`  Workers: ${WORKER_COUNT}`);
 console.log(`  Public port: ${PUBLIC_PORT}`);
 console.log(`  Internal ports: ${INTERNAL_PORT_BASE}–${INTERNAL_PORT_BASE + WORKER_COUNT - 1}`);

@@ -3,7 +3,7 @@ node_modules/
 
 # Build output
 dist/
-bunpm2
+bunpilot
 
 # Runtime data
 .tmp/

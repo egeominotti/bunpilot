@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Control Protocol unit tests
+// bunpilot – Control Protocol unit tests
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';

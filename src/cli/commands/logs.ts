@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – CLI Command: logs
+// bunpilot – CLI Command: logs
 // ---------------------------------------------------------------------------
 //
 // Display and optionally stream application logs.

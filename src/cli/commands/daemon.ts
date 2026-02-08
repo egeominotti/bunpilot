@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – CLI Command: daemon
+// bunpilot – CLI Command: daemon
 // ---------------------------------------------------------------------------
 //
 // Manage the background daemon process.
@@ -26,7 +26,7 @@ export async function daemonCommand(
   const sub = args[0];
 
   if (!sub || !['start', 'stop', 'status'].includes(sub)) {
-    logError('Usage: bunpm2 daemon <start|stop|status>');
+    logError('Usage: bunpilot daemon <start|stop|status>');
     process.exit(1);
   }
 

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – CLI Command: delete
+// bunpilot – CLI Command: delete
 // ---------------------------------------------------------------------------
 //
 // Delete an application from the daemon. The app is stopped (if running)

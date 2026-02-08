@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // ---------------------------------------------------------------------------
-// bunpm2 – Main Entry Point
+// bunpilot – Main Entry Point
 // ---------------------------------------------------------------------------
 //
 // Parses CLI arguments and routes to the appropriate command handler.
@@ -9,7 +9,7 @@
 
 import { parseArgs } from './cli/index';
 import { logError } from './cli/format';
-import { ensureBunpm2Home } from './constants';
+import { ensureBunpilotHome } from './constants';
 
 // ---------------------------------------------------------------------------
 // ANSI helpers (local — avoid pulling the full format module for help text)
@@ -30,7 +30,7 @@ const VERSION = '0.1.0';
 // ---------------------------------------------------------------------------
 
 function showHelp(): void {
-  const bin = 'bunpm2';
+  const bin = 'bunpilot';
 
   console.log(`
 ${BOLD}${bin}${RESET} — Bun-native process manager
@@ -67,7 +67,7 @@ ${BOLD}Global Flags:${RESET}
 }
 
 function showVersion(): void {
-  console.log(`bunpm2 v${VERSION}`);
+  console.log(`bunpilot v${VERSION}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ function showVersion(): void {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  ensureBunpm2Home();
+  ensureBunpilotHome();
 
   const parsed = parseArgs(process.argv);
   const { command, args, flags } = parsed;

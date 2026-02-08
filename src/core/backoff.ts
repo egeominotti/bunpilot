@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Crash Recovery with Exponential Backoff
+// bunpilot – Crash Recovery with Exponential Backoff
 // ---------------------------------------------------------------------------
 
 import type { AppConfig, BackoffState } from '../config/types';

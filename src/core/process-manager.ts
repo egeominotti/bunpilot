@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Process Spawn & Kill
+// bunpilot – Process Spawn & Kill
 // ---------------------------------------------------------------------------
 
 import type { Subprocess } from 'bun';
@@ -32,7 +32,7 @@ export class ProcessManager {
   /**
    * Spawn a new worker process using `Bun.spawn`.
    *
-   * Sets the standard BUNPM2 worker environment variables and strips
+   * Sets the standard BUNPILOT worker environment variables and strips
    * internal-only keys so they never leak to the child.
    */
   spawnWorker(
@@ -126,14 +126,14 @@ export class ProcessManager {
       ...(config.env ?? {}),
     };
 
-    // Inject BUNPM2 worker vars.
-    base['BUNPM2_WORKER_ID'] = String(workerId);
+    // Inject BUNPILOT worker vars.
+    base['BUNPILOT_WORKER_ID'] = String(workerId);
     if (config.port !== undefined) {
-      base['BUNPM2_PORT'] = String(config.port);
+      base['BUNPILOT_PORT'] = String(config.port);
     }
-    base['BUNPM2_REUSE_PORT'] = '1';
-    base['BUNPM2_APP_NAME'] = config.name;
-    base['BUNPM2_INSTANCES'] = String(config.instances);
+    base['BUNPILOT_REUSE_PORT'] = '1';
+    base['BUNPILOT_APP_NAME'] = config.name;
+    base['BUNPILOT_INSTANCES'] = String(config.instances);
 
     return base;
   }

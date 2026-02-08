@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Prometheus Exposition Format
+// bunpilot – Prometheus Exposition Format
 // ---------------------------------------------------------------------------
 
 import type { WorkerState } from '../config/types';
@@ -34,27 +34,27 @@ interface MetricDescriptor {
 
 const PER_WORKER_METRICS: MetricDescriptor[] = [
   {
-    name: 'bunpm2_worker_memory_rss_bytes',
+    name: 'bunpilot_worker_memory_rss_bytes',
     help: 'Resident set size of the worker process in bytes',
     type: 'gauge',
   },
   {
-    name: 'bunpm2_worker_memory_heap_used_bytes',
+    name: 'bunpilot_worker_memory_heap_used_bytes',
     help: 'V8 heap memory used by the worker process in bytes',
     type: 'gauge',
   },
   {
-    name: 'bunpm2_worker_cpu_percent',
+    name: 'bunpilot_worker_cpu_percent',
     help: 'CPU usage of the worker process as a percentage',
     type: 'gauge',
   },
   {
-    name: 'bunpm2_worker_restarts_total',
+    name: 'bunpilot_worker_restarts_total',
     help: 'Total number of restarts for the worker',
     type: 'counter',
   },
   {
-    name: 'bunpm2_worker_uptime_seconds',
+    name: 'bunpilot_worker_uptime_seconds',
     help: 'Uptime of the worker process in seconds',
     type: 'gauge',
   },
@@ -62,12 +62,12 @@ const PER_WORKER_METRICS: MetricDescriptor[] = [
 
 const PER_APP_METRICS: MetricDescriptor[] = [
   {
-    name: 'bunpm2_app_workers_online',
+    name: 'bunpilot_app_workers_online',
     help: 'Number of workers in online state',
     type: 'gauge',
   },
   {
-    name: 'bunpm2_app_workers_errored',
+    name: 'bunpilot_app_workers_errored',
     help: 'Number of workers in errored state',
     type: 'gauge',
   },
@@ -75,8 +75,8 @@ const PER_APP_METRICS: MetricDescriptor[] = [
 
 const MASTER_METRICS: MetricDescriptor[] = [
   {
-    name: 'bunpm2_master_uptime_seconds',
-    help: 'Uptime of the bunpm2 master process in seconds',
+    name: 'bunpilot_master_uptime_seconds',
+    help: 'Uptime of the bunpilot master process in seconds',
     type: 'gauge',
   },
 ];
@@ -167,19 +167,19 @@ export function formatPrometheus(apps: AppMetricsInput[]): string {
 
 function workerMetricValue(metricName: string, worker: AppWorkerMetrics): number | null {
   switch (metricName) {
-    case 'bunpm2_worker_memory_rss_bytes':
+    case 'bunpilot_worker_memory_rss_bytes':
       return worker.metrics?.memory.rss ?? null;
 
-    case 'bunpm2_worker_memory_heap_used_bytes':
+    case 'bunpilot_worker_memory_heap_used_bytes':
       return worker.metrics?.memory.heapUsed ?? null;
 
-    case 'bunpm2_worker_cpu_percent':
+    case 'bunpilot_worker_cpu_percent':
       return worker.metrics ? parseFloat(worker.metrics.cpuPercent.toFixed(1)) : null;
 
-    case 'bunpm2_worker_restarts_total':
+    case 'bunpilot_worker_restarts_total':
       return worker.restartCount;
 
-    case 'bunpm2_worker_uptime_seconds':
+    case 'bunpilot_worker_uptime_seconds':
       return parseFloat(worker.uptime.toFixed(1));
 
     default:
@@ -189,10 +189,10 @@ function workerMetricValue(metricName: string, worker: AppWorkerMetrics): number
 
 function appMetricValue(metricName: string, app: AppMetricsInput): number {
   switch (metricName) {
-    case 'bunpm2_app_workers_online':
+    case 'bunpilot_app_workers_online':
       return app.workers.filter((w) => w.state === 'online').length;
 
-    case 'bunpm2_app_workers_errored':
+    case 'bunpilot_app_workers_errored':
       return app.workers.filter((w) => w.state === 'errored' || w.state === 'crashed').length;
 
     default:

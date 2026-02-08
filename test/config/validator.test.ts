@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Unit Tests for Config Validator
+// bunpilot – Unit Tests for Config Validator
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';
@@ -215,16 +215,16 @@ describe('validateConfig', () => {
     const result = validateConfig({
       apps: [{ name: 'a', script: 's.ts' }],
       daemon: {
-        pidFile: '/tmp/bunpm2.pid',
-        socketFile: '/tmp/bunpm2.sock',
-        logFile: '/tmp/bunpm2.log',
+        pidFile: '/tmp/bunpilot.pid',
+        socketFile: '/tmp/bunpilot.sock',
+        logFile: '/tmp/bunpilot.log',
       },
     });
 
     expect(result.daemon).toBeDefined();
-    expect(result.daemon!.pidFile).toBe('/tmp/bunpm2.pid');
-    expect(result.daemon!.socketFile).toBe('/tmp/bunpm2.sock');
-    expect(result.daemon!.logFile).toBe('/tmp/bunpm2.log');
+    expect(result.daemon!.pidFile).toBe('/tmp/bunpilot.pid');
+    expect(result.daemon!.socketFile).toBe('/tmp/bunpilot.sock');
+    expect(result.daemon!.logFile).toBe('/tmp/bunpilot.log');
   });
 
   test('validates multiple apps correctly', () => {

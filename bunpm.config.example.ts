@@ -1,15 +1,15 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Example Configuration
+// bunpilot – Example Configuration
 // ---------------------------------------------------------------------------
-// Copy this file to `bunpm2.config.ts` and adjust to your needs.
+// Copy this file to `bunpilot.config.ts` and adjust to your needs.
 //
-//   cp bunpm2.config.example.ts bunpm2.config.ts
+//   cp bunpilot.config.example.ts bunpilot.config.ts
 //
 // ---------------------------------------------------------------------------
 
-import type { Bunpm2Config } from './src/config/types';
+import type { BunpilotConfig } from './src/config/types';
 
-const config: Bunpm2Config = {
+const config: BunpilotConfig = {
   // ---------------------------------------------------------------------------
   // Applications
   // ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ const config: Bunpm2Config = {
         LOG_LEVEL: 'info',
       },
 
-      // HTTP health check (bunpm2 pings each worker periodically).
+      // HTTP health check (bunpilot pings each worker periodically).
       healthCheck: {
         enabled: true,
         path: '/health',
@@ -52,7 +52,7 @@ const config: Bunpm2Config = {
         max: 30_000,
       },
 
-      // Time to wait for the worker to call bunpm2Ready()
+      // Time to wait for the worker to call bunpilotReady()
       readyTimeout: 10_000,
 
       // Graceful shutdown
@@ -115,9 +115,9 @@ const config: Bunpm2Config = {
   // Daemon settings (optional)
   // ---------------------------------------------------------------------------
   daemon: {
-    pidFile: './bunpm2.pid',
-    socketFile: './bunpm2.sock',
-    logFile: './logs/bunpm2-daemon.log',
+    pidFile: './bunpilot.pid',
+    socketFile: './bunpilot.sock',
+    logFile: './logs/bunpilot-daemon.log',
   },
 };
 

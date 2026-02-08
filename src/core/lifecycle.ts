@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Worker State Machine
+// bunpilot – Worker State Machine
 // ---------------------------------------------------------------------------
 
 import { TRANSITIONS, type WorkerState } from '../config/types';

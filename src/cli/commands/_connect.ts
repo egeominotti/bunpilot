@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// bunpm2 – Shared Daemon Connection Helper
+// bunpilot – Shared Daemon Connection Helper
 // ---------------------------------------------------------------------------
 //
 // Extracted into a single module so all command files can reuse the same
