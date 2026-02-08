@@ -2,12 +2,16 @@
 // bunpilot – Unit Tests for CLI Format Utilities
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import {
   formatTable,
   formatUptime,
   formatMemory,
   formatState,
+  log,
+  logError,
+  logSuccess,
+  logWarn,
 } from '../../src/cli/format';
 
 // ---------------------------------------------------------------------------
@@ -166,5 +170,217 @@ describe('formatState', () => {
     const result = formatState('online');
     // Should contain escape sequences for coloring
     expect(result).toContain('\x1b[');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// log
+// ---------------------------------------------------------------------------
+
+describe('log', () => {
+  let consoleSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  test('writes to console.log', () => {
+    log('INFO', 'hello world');
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('output contains the prefix text', () => {
+    log('START', 'app launched');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('START');
+  });
+
+  test('output contains the message text', () => {
+    log('INFO', 'server is running');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('server is running');
+  });
+
+  test('output contains the bunpilot label', () => {
+    log('INFO', 'test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('bunpilot');
+  });
+
+  test('output contains the box-drawing separator', () => {
+    log('INFO', 'test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('\u2502');
+  });
+
+  test('output contains ANSI escape codes for coloring', () => {
+    log('INFO', 'test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    // Green color for the prefix
+    expect(output).toContain('\x1b[32m');
+    // Bold for [bunpilot]
+    expect(output).toContain('\x1b[1m');
+    // Reset codes
+    expect(output).toContain('\x1b[0m');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// logError
+// ---------------------------------------------------------------------------
+
+describe('logError', () => {
+  let consoleSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  test('writes to console.error (not console.log)', () => {
+    logError('something broke');
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('output contains the ERROR label', () => {
+    logError('disk full');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('ERROR');
+  });
+
+  test('output contains the message text', () => {
+    logError('disk full');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('disk full');
+  });
+
+  test('output contains the bunpilot label', () => {
+    logError('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('bunpilot');
+  });
+
+  test('output contains the box-drawing separator', () => {
+    logError('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('\u2502');
+  });
+
+  test('output uses red ANSI color for the ERROR label', () => {
+    logError('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    // Red color code wraps "ERROR"
+    expect(output).toContain('\x1b[31mERROR\x1b[0m');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// logSuccess
+// ---------------------------------------------------------------------------
+
+describe('logSuccess', () => {
+  let consoleSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  test('writes to console.log', () => {
+    logSuccess('done');
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('output contains the OK label', () => {
+    logSuccess('all good');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('OK');
+  });
+
+  test('output contains the message text', () => {
+    logSuccess('app started successfully');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('app started successfully');
+  });
+
+  test('output contains the bunpilot label', () => {
+    logSuccess('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('bunpilot');
+  });
+
+  test('output contains the box-drawing separator', () => {
+    logSuccess('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('\u2502');
+  });
+
+  test('output uses green ANSI color for the OK label', () => {
+    logSuccess('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    // Green color code wraps "OK"
+    expect(output).toContain('\x1b[32mOK\x1b[0m');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// logWarn
+// ---------------------------------------------------------------------------
+
+describe('logWarn', () => {
+  let consoleSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  test('writes to console.log', () => {
+    logWarn('careful');
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('output contains the WARN label', () => {
+    logWarn('low memory');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('WARN');
+  });
+
+  test('output contains the message text', () => {
+    logWarn('memory usage high');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('memory usage high');
+  });
+
+  test('output contains the bunpilot label', () => {
+    logWarn('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('bunpilot');
+  });
+
+  test('output contains the box-drawing separator', () => {
+    logWarn('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    expect(output).toContain('\u2502');
+  });
+
+  test('output uses yellow ANSI color for the WARN label', () => {
+    logWarn('test');
+    const output = consoleSpy.mock.calls[0][0] as string;
+    // Yellow color code wraps "WARN"
+    expect(output).toContain('\x1b[33mWARN\x1b[0m');
   });
 });

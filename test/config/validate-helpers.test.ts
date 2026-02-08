@@ -6,6 +6,8 @@ import { describe, test, expect } from 'bun:test';
 import {
   isRecord,
   assertString,
+  assertNumber,
+  assertPositiveInt,
   validateBoundedNumber,
   validatePort,
   validateInstances,
@@ -13,6 +15,9 @@ import {
   validateEnv,
   validateHealthCheck,
   validateBackoff,
+  validateLogs,
+  validateMetrics,
+  validateClustering,
 } from '../../src/config/validate-helpers';
 
 // ---------------------------------------------------------------------------
@@ -270,5 +275,374 @@ describe('validateBackoff', () => {
     expect(() => validateBackoff({ multiplier: 20 }, 'ctx')).toThrow(
       '"backoff.multiplier" must be between 1 and 10',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assertNumber
+// ---------------------------------------------------------------------------
+
+describe('assertNumber', () => {
+  test('does not throw for valid finite numbers', () => {
+    expect(() => assertNumber(0, 'field', 'ctx')).not.toThrow();
+    expect(() => assertNumber(42, 'field', 'ctx')).not.toThrow();
+    expect(() => assertNumber(-3.14, 'field', 'ctx')).not.toThrow();
+    expect(() => assertNumber(Number.MAX_SAFE_INTEGER, 'field', 'ctx')).not.toThrow();
+  });
+
+  test('throws for NaN', () => {
+    expect(() => assertNumber(NaN, 'field', 'ctx')).toThrow('"field" must be a finite number');
+  });
+
+  test('throws for Infinity', () => {
+    expect(() => assertNumber(Infinity, 'field', 'ctx')).toThrow('"field" must be a finite number');
+    expect(() => assertNumber(-Infinity, 'field', 'ctx')).toThrow(
+      '"field" must be a finite number',
+    );
+  });
+
+  test('throws for non-number types', () => {
+    expect(() => assertNumber('42', 'field', 'ctx')).toThrow('"field" must be a finite number');
+    expect(() => assertNumber(null, 'field', 'ctx')).toThrow('"field" must be a finite number');
+    expect(() => assertNumber(undefined, 'field', 'ctx')).toThrow(
+      '"field" must be a finite number',
+    );
+    expect(() => assertNumber(true, 'field', 'ctx')).toThrow('"field" must be a finite number');
+    expect(() => assertNumber({}, 'field', 'ctx')).toThrow('"field" must be a finite number');
+    expect(() => assertNumber([], 'field', 'ctx')).toThrow('"field" must be a finite number');
+  });
+
+  test('includes context and field in error message', () => {
+    expect(() => assertNumber('bad', 'timeout', 'app:web')).toThrow(
+      '[app:web] "timeout" must be a finite number',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assertPositiveInt
+// ---------------------------------------------------------------------------
+
+describe('assertPositiveInt', () => {
+  test('does not throw for valid positive integers', () => {
+    expect(() => assertPositiveInt(1, 'field', 'ctx')).not.toThrow();
+    expect(() => assertPositiveInt(100, 'field', 'ctx')).not.toThrow();
+    expect(() => assertPositiveInt(Number.MAX_SAFE_INTEGER, 'field', 'ctx')).not.toThrow();
+  });
+
+  test('throws for zero', () => {
+    expect(() => assertPositiveInt(0, 'field', 'ctx')).toThrow(
+      '"field" must be a positive integer',
+    );
+  });
+
+  test('throws for negative integers', () => {
+    expect(() => assertPositiveInt(-1, 'field', 'ctx')).toThrow(
+      '"field" must be a positive integer',
+    );
+    expect(() => assertPositiveInt(-100, 'field', 'ctx')).toThrow(
+      '"field" must be a positive integer',
+    );
+  });
+
+  test('throws for floating point numbers', () => {
+    expect(() => assertPositiveInt(1.5, 'field', 'ctx')).toThrow(
+      '"field" must be a positive integer',
+    );
+    expect(() => assertPositiveInt(3.14, 'field', 'ctx')).toThrow(
+      '"field" must be a positive integer',
+    );
+  });
+
+  test('throws for non-number types (delegates to assertNumber)', () => {
+    expect(() => assertPositiveInt('5', 'field', 'ctx')).toThrow(
+      '"field" must be a finite number',
+    );
+    expect(() => assertPositiveInt(null, 'field', 'ctx')).toThrow(
+      '"field" must be a finite number',
+    );
+    expect(() => assertPositiveInt(undefined, 'field', 'ctx')).toThrow(
+      '"field" must be a finite number',
+    );
+  });
+
+  test('throws for NaN and Infinity (delegates to assertNumber)', () => {
+    expect(() => assertPositiveInt(NaN, 'field', 'ctx')).toThrow(
+      '"field" must be a finite number',
+    );
+    expect(() => assertPositiveInt(Infinity, 'field', 'ctx')).toThrow(
+      '"field" must be a finite number',
+    );
+  });
+
+  test('includes context and field in error message', () => {
+    expect(() => assertPositiveInt(0, 'instances', 'app:api')).toThrow(
+      '[app:api] "instances" must be a positive integer',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateLogs
+// ---------------------------------------------------------------------------
+
+describe('validateLogs', () => {
+  test('returns defaults when given undefined', () => {
+    const result = validateLogs(undefined, 'ctx');
+    expect(result.maxSize).toBe(10 * 1024 * 1024);
+    expect(result.maxFiles).toBe(5);
+    expect(result.outFile).toBeUndefined();
+    expect(result.errFile).toBeUndefined();
+  });
+
+  test('returns defaults when given null', () => {
+    const result = validateLogs(null, 'ctx');
+    expect(result.maxSize).toBe(10 * 1024 * 1024);
+    expect(result.maxFiles).toBe(5);
+  });
+
+  test('applies custom maxSize and maxFiles', () => {
+    const result = validateLogs({ maxSize: 2048, maxFiles: 10 }, 'ctx');
+    expect(result.maxSize).toBe(2048);
+    expect(result.maxFiles).toBe(10);
+  });
+
+  test('accepts outFile and errFile strings', () => {
+    const result = validateLogs(
+      { outFile: '/var/log/app-out.log', errFile: '/var/log/app-err.log' },
+      'ctx',
+    );
+    expect(result.outFile).toBe('/var/log/app-out.log');
+    expect(result.errFile).toBe('/var/log/app-err.log');
+  });
+
+  test('ignores empty outFile and errFile strings', () => {
+    const result = validateLogs({ outFile: '', errFile: '' }, 'ctx');
+    expect(result.outFile).toBeUndefined();
+    expect(result.errFile).toBeUndefined();
+  });
+
+  test('ignores non-string outFile and errFile', () => {
+    const result = validateLogs({ outFile: 123, errFile: true }, 'ctx');
+    expect(result.outFile).toBeUndefined();
+    expect(result.errFile).toBeUndefined();
+  });
+
+  test('throws when not an object', () => {
+    expect(() => validateLogs('bad', 'ctx')).toThrow('"logs" must be an object');
+    expect(() => validateLogs(42, 'ctx')).toThrow('"logs" must be an object');
+    expect(() => validateLogs([1, 2], 'ctx')).toThrow('"logs" must be an object');
+  });
+
+  test('throws when maxSize is below minimum', () => {
+    expect(() => validateLogs({ maxSize: 500 }, 'ctx')).toThrow(
+      '"logs.maxSize" must be between 1024 and 1073741824',
+    );
+  });
+
+  test('throws when maxSize is above maximum', () => {
+    expect(() => validateLogs({ maxSize: 2_000_000_000 }, 'ctx')).toThrow(
+      '"logs.maxSize" must be between 1024 and 1073741824',
+    );
+  });
+
+  test('throws when maxFiles is below minimum', () => {
+    expect(() => validateLogs({ maxFiles: 0 }, 'ctx')).toThrow(
+      '"logs.maxFiles" must be between 1 and 100',
+    );
+  });
+
+  test('throws when maxFiles is above maximum', () => {
+    expect(() => validateLogs({ maxFiles: 101 }, 'ctx')).toThrow(
+      '"logs.maxFiles" must be between 1 and 100',
+    );
+  });
+
+  test('uses defaults for omitted numeric fields', () => {
+    const result = validateLogs({}, 'ctx');
+    expect(result.maxSize).toBe(10 * 1024 * 1024);
+    expect(result.maxFiles).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateMetrics
+// ---------------------------------------------------------------------------
+
+describe('validateMetrics', () => {
+  test('returns defaults when given undefined', () => {
+    const result = validateMetrics(undefined, 'ctx');
+    expect(result.enabled).toBe(true);
+    expect(result.httpPort).toBe(9_615);
+    expect(result.prometheus).toBe(false);
+    expect(result.collectInterval).toBe(5_000);
+  });
+
+  test('returns defaults when given null', () => {
+    const result = validateMetrics(null, 'ctx');
+    expect(result.enabled).toBe(true);
+    expect(result.httpPort).toBe(9_615);
+    expect(result.prometheus).toBe(false);
+    expect(result.collectInterval).toBe(5_000);
+  });
+
+  test('applies custom values', () => {
+    const result = validateMetrics(
+      { enabled: false, httpPort: 8080, prometheus: true, collectInterval: 10_000 },
+      'ctx',
+    );
+    expect(result.enabled).toBe(false);
+    expect(result.httpPort).toBe(8080);
+    expect(result.prometheus).toBe(true);
+    expect(result.collectInterval).toBe(10_000);
+  });
+
+  test('uses default enabled when not a boolean', () => {
+    const result = validateMetrics({ enabled: 'yes' }, 'ctx');
+    expect(result.enabled).toBe(true);
+  });
+
+  test('uses default prometheus when not a boolean', () => {
+    const result = validateMetrics({ prometheus: 'yes' }, 'ctx');
+    expect(result.prometheus).toBe(false);
+  });
+
+  test('uses default httpPort when not provided', () => {
+    const result = validateMetrics({}, 'ctx');
+    expect(result.httpPort).toBe(9_615);
+  });
+
+  test('throws when not an object', () => {
+    expect(() => validateMetrics('bad', 'ctx')).toThrow('"metrics" must be an object');
+    expect(() => validateMetrics(42, 'ctx')).toThrow('"metrics" must be an object');
+    expect(() => validateMetrics([1, 2], 'ctx')).toThrow('"metrics" must be an object');
+  });
+
+  test('throws when httpPort is invalid', () => {
+    expect(() => validateMetrics({ httpPort: 0 }, 'ctx')).toThrow();
+    expect(() => validateMetrics({ httpPort: 70_000 }, 'ctx')).toThrow();
+    expect(() => validateMetrics({ httpPort: -1 }, 'ctx')).toThrow();
+  });
+
+  test('throws when httpPort is not a number', () => {
+    expect(() => validateMetrics({ httpPort: 'abc' }, 'ctx')).toThrow();
+  });
+
+  test('throws when collectInterval is out of range', () => {
+    expect(() => validateMetrics({ collectInterval: 500 }, 'ctx')).toThrow(
+      '"metrics.collectInterval" must be between 1000 and 300000',
+    );
+    expect(() => validateMetrics({ collectInterval: 400_000 }, 'ctx')).toThrow(
+      '"metrics.collectInterval" must be between 1000 and 300000',
+    );
+  });
+
+  test('uses defaults for omitted fields in empty object', () => {
+    const result = validateMetrics({}, 'ctx');
+    expect(result.enabled).toBe(true);
+    expect(result.prometheus).toBe(false);
+    expect(result.collectInterval).toBe(5_000);
+    expect(result.httpPort).toBe(9_615);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateClustering
+// ---------------------------------------------------------------------------
+
+describe('validateClustering', () => {
+  test('returns defaults when given undefined', () => {
+    const result = validateClustering(undefined, 'ctx');
+    expect(result.enabled).toBe(true);
+    expect(result.strategy).toBe('auto');
+    expect(result.rollingRestart).toEqual({ batchSize: 1, batchDelay: 1_000 });
+  });
+
+  test('returns defaults when given null', () => {
+    const result = validateClustering(null, 'ctx');
+    expect(result.enabled).toBe(true);
+    expect(result.strategy).toBe('auto');
+    expect(result.rollingRestart).toEqual({ batchSize: 1, batchDelay: 1_000 });
+  });
+
+  test('applies custom values', () => {
+    const result = validateClustering(
+      {
+        enabled: false,
+        strategy: 'proxy',
+        rollingRestart: { batchSize: 5, batchDelay: 2_000 },
+      },
+      'ctx',
+    );
+    expect(result.enabled).toBe(false);
+    expect(result.strategy).toBe('proxy');
+    expect(result.rollingRestart.batchSize).toBe(5);
+    expect(result.rollingRestart.batchDelay).toBe(2_000);
+  });
+
+  test('accepts all valid strategies', () => {
+    expect(validateClustering({ strategy: 'reusePort' }, 'ctx').strategy).toBe('reusePort');
+    expect(validateClustering({ strategy: 'proxy' }, 'ctx').strategy).toBe('proxy');
+    expect(validateClustering({ strategy: 'auto' }, 'ctx').strategy).toBe('auto');
+  });
+
+  test('falls back to default strategy for invalid string', () => {
+    const result = validateClustering({ strategy: 'invalid' }, 'ctx');
+    expect(result.strategy).toBe('auto');
+  });
+
+  test('falls back to default strategy for non-string', () => {
+    const result = validateClustering({ strategy: 42 }, 'ctx');
+    expect(result.strategy).toBe('auto');
+  });
+
+  test('uses default enabled when not a boolean', () => {
+    const result = validateClustering({ enabled: 'yes' }, 'ctx');
+    expect(result.enabled).toBe(true);
+  });
+
+  test('throws when not an object', () => {
+    expect(() => validateClustering('bad', 'ctx')).toThrow('"clustering" must be an object');
+    expect(() => validateClustering(42, 'ctx')).toThrow('"clustering" must be an object');
+    expect(() => validateClustering([1, 2], 'ctx')).toThrow('"clustering" must be an object');
+  });
+
+  test('uses default rollingRestart when not provided', () => {
+    const result = validateClustering({}, 'ctx');
+    expect(result.rollingRestart).toEqual({ batchSize: 1, batchDelay: 1_000 });
+  });
+
+  test('uses default rollingRestart when not an object', () => {
+    const result = validateClustering({ rollingRestart: 'bad' }, 'ctx');
+    expect(result.rollingRestart).toEqual({ batchSize: 1, batchDelay: 1_000 });
+  });
+
+  test('throws when rollingRestart.batchSize is out of range', () => {
+    expect(() =>
+      validateClustering({ rollingRestart: { batchSize: 0 } }, 'ctx'),
+    ).toThrow('"clustering.rollingRestart.batchSize" must be between 1 and 100');
+    expect(() =>
+      validateClustering({ rollingRestart: { batchSize: 101 } }, 'ctx'),
+    ).toThrow('"clustering.rollingRestart.batchSize" must be between 1 and 100');
+  });
+
+  test('throws when rollingRestart.batchDelay is out of range', () => {
+    expect(() =>
+      validateClustering({ rollingRestart: { batchDelay: -1 } }, 'ctx'),
+    ).toThrow('"clustering.rollingRestart.batchDelay" must be between 0 and 300000');
+    expect(() =>
+      validateClustering({ rollingRestart: { batchDelay: 400_000 } }, 'ctx'),
+    ).toThrow('"clustering.rollingRestart.batchDelay" must be between 0 and 300000');
+  });
+
+  test('uses defaults for omitted rollingRestart fields', () => {
+    const result = validateClustering({ rollingRestart: {} }, 'ctx');
+    expect(result.rollingRestart.batchSize).toBe(1);
+    expect(result.rollingRestart.batchDelay).toBe(1_000);
+  });
+
+  test('accepts batchDelay of 0', () => {
+    const result = validateClustering({ rollingRestart: { batchDelay: 0 } }, 'ctx');
+    expect(result.rollingRestart.batchDelay).toBe(0);
   });
 });

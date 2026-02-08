@@ -3,7 +3,13 @@
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect } from 'bun:test';
-import { isValidWorkerMessage, isValidMasterMessage } from '../../src/ipc/protocol';
+import {
+  isValidWorkerMessage,
+  isValidMasterMessage,
+  createShutdownMessage,
+  createPingMessage,
+  createCollectMetricsMessage,
+} from '../../src/ipc/protocol';
 
 describe('isValidWorkerMessage', () => {
   test('accepts a valid "ready" message', () => {
@@ -126,5 +132,66 @@ describe('isValidMasterMessage', () => {
 
   test('rejects null', () => {
     expect(isValidMasterMessage(null)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Message factory functions
+// ---------------------------------------------------------------------------
+
+describe('createShutdownMessage', () => {
+  test('returns a message with type "shutdown" and the given timeout', () => {
+    const msg = createShutdownMessage(5000);
+    expect(msg).toEqual({ type: 'shutdown', timeout: 5000 });
+  });
+
+  test('accepts zero as a valid timeout', () => {
+    const msg = createShutdownMessage(0);
+    expect(msg).toEqual({ type: 'shutdown', timeout: 0 });
+  });
+
+  test('preserves large timeout values', () => {
+    const msg = createShutdownMessage(60_000);
+    expect(msg.type).toBe('shutdown');
+    expect((msg as { timeout: number }).timeout).toBe(60_000);
+  });
+
+  test('produces a valid master message', () => {
+    const msg = createShutdownMessage(3000);
+    expect(isValidMasterMessage(msg)).toBe(true);
+  });
+});
+
+describe('createPingMessage', () => {
+  test('returns a message with type "ping"', () => {
+    const msg = createPingMessage();
+    expect(msg).toEqual({ type: 'ping' });
+  });
+
+  test('has no extra properties beyond type', () => {
+    const msg = createPingMessage();
+    expect(Object.keys(msg)).toEqual(['type']);
+  });
+
+  test('produces a valid master message', () => {
+    const msg = createPingMessage();
+    expect(isValidMasterMessage(msg)).toBe(true);
+  });
+});
+
+describe('createCollectMetricsMessage', () => {
+  test('returns a message with type "collect-metrics"', () => {
+    const msg = createCollectMetricsMessage();
+    expect(msg).toEqual({ type: 'collect-metrics' });
+  });
+
+  test('has no extra properties beyond type', () => {
+    const msg = createCollectMetricsMessage();
+    expect(Object.keys(msg)).toEqual(['type']);
+  });
+
+  test('produces a valid master message', () => {
+    const msg = createCollectMetricsMessage();
+    expect(isValidMasterMessage(msg)).toBe(true);
   });
 });
