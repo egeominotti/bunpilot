@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+bunpm
+
+# Runtime data
+.tmp/
+*.pid
+*.sock
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Coverage
+coverage/
+
+# Bun
+bun.lockb
