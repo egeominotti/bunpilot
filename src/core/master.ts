@@ -4,6 +4,8 @@
 
 import { cpus } from 'node:os';
 import type { AppConfig, AppStatus, WorkerInfo } from '../config/types';
+import { DEFAULT_LOGS } from '../constants';
+import { LogManager } from '../logs/manager';
 import { ProcessManager } from './process-manager';
 import { CrashRecovery } from './backoff';
 import { WorkerLifecycle } from './lifecycle';
@@ -21,9 +23,16 @@ export class MasterOrchestrator {
   private readonly lifecycle = new WorkerLifecycle();
   private readonly reloadHandler = new ReloadHandler();
   private readonly workerHandler: WorkerHandler;
+  private readonly logManager = new LogManager();
+  private readonly shutdownCallbacks: Array<() => void | Promise<void>> = [];
 
   constructor() {
     this.workerHandler = new WorkerHandler(this.processManager, this.crashRecovery, this.lifecycle);
+  }
+
+  /** Register a callback to run during shutdown (for cleaning up external resources). */
+  onShutdown(cb: () => void | Promise<void>): void {
+    this.shutdownCallbacks.push(cb);
   }
 
   // -----------------------------------------------------------------------
@@ -42,6 +51,7 @@ export class MasterOrchestrator {
       spawned: new Map(),
       startedAt: Date.now(),
       stableTimers: new Map(),
+      nextWorkerId: instances,
     };
     this.apps.set(config.name, managed);
 
@@ -73,6 +83,7 @@ export class MasterOrchestrator {
     managed.workers = [];
     managed.spawned.clear();
     managed.startedAt = Date.now();
+    managed.nextWorkerId = instances;
 
     for (let i = 0; i < instances; i++) {
       this.spawnWorker(managed, i);
@@ -92,7 +103,10 @@ export class MasterOrchestrator {
       workers: currentWorkers,
       processManager: this.processManager,
       lifecycle: this.lifecycle,
-      spawnAndTrack: (cfg, wid) => this.spawnWorker(managed, wid),
+      spawnAndTrack: (_cfg, _wid) => {
+        const newId = managed.nextWorkerId++;
+        return this.spawnWorker(managed, newId);
+      },
       drainAndStop: (w) => this.workerHandler.drainAndStopWorker(managed, w),
     });
   }
@@ -134,6 +148,18 @@ export class MasterOrchestrator {
   async shutdown(_signal: string): Promise<void> {
     const names = [...this.apps.keys()];
     await Promise.all(names.map((n) => this.stopApp(n)));
+
+    // Clean up managed resources
+    this.logManager.closeAll();
+
+    // Run externally registered cleanup callbacks
+    for (const cb of this.shutdownCallbacks) {
+      try {
+        await cb();
+      } catch (err) {
+        console.error('[master] shutdown cleanup error:', err);
+      }
+    }
   }
 
   async reloadAll(): Promise<void> {
@@ -165,6 +191,18 @@ export class MasterOrchestrator {
     managed.spawned.set(workerId, spawned);
     this.workerHandler.scheduleStableCheck(managed, worker);
 
+    // Pipe stdout/stderr to log files
+    const logsConfig = managed.config.logs ?? DEFAULT_LOGS;
+    const isDaemon = !!process.env.BUNPM_DAEMON;
+    this.logManager.pipeOutput(
+      managed.config.name,
+      workerId,
+      spawned.stdout,
+      spawned.stderr,
+      logsConfig,
+      !isDaemon,
+    );
+
     return worker;
   }
 
@@ -191,6 +229,18 @@ export class MasterOrchestrator {
     managed.spawned.set(worker.id, spawned);
 
     this.workerHandler.scheduleStableCheck(managed, worker);
+
+    // Pipe stdout/stderr to log files
+    const logsConfig = managed.config.logs ?? DEFAULT_LOGS;
+    const isDaemon = !!process.env.BUNPM_DAEMON;
+    this.logManager.pipeOutput(
+      managed.config.name,
+      worker.id,
+      spawned.stdout,
+      spawned.stderr,
+      logsConfig,
+      !isDaemon,
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -232,7 +282,9 @@ export class MasterOrchestrator {
     const hasErrored = managed.workers.some((w) => w.state === 'errored');
 
     let status: AppStatus['status'];
-    if (allStopped && managed.workers.length > 0) {
+    if (managed.workers.length === 0) {
+      status = managed.startedAt ? 'running' : 'stopped';
+    } else if (allStopped) {
       status = hasErrored ? 'errored' : 'stopped';
     } else if (hasOnline) {
       status = 'running';

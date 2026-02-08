@@ -49,6 +49,7 @@ export class MetricsHttpServer {
     }
 
     this.server = Bun.serve({
+      hostname: '127.0.0.1',
       port: this.port,
       fetch: (req) => this.handleRequest(req),
     });

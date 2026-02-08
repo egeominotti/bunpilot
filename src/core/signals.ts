@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 export interface SignalCallbacks {
-  onShutdown(signal: string): void;
+  onShutdown(signal: string): Promise<void> | void;
   onReload(): void;
 }
 
@@ -34,7 +34,18 @@ export function setupSignalHandlers(callbacks: SignalCallbacks): void {
   // Clean up any previously registered handlers to avoid stacking.
   removeSignalHandlers();
 
-  const shutdownHandler: SignalHandler = (sig) => callbacks.onShutdown(sig);
+  let shuttingDown = false;
+  const shutdownHandler: SignalHandler = (sig) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    Promise.resolve(callbacks.onShutdown(sig))
+      .catch((err) => {
+        console.error('[signals] shutdown error:', err);
+      })
+      .finally(() => {
+        process.exit(0);
+      });
+  };
   const reloadHandler: SignalHandler = () => callbacks.onReload();
   const ignoreHandler: SignalHandler = () => {
     /* intentionally empty – ignore SIGPIPE */
@@ -44,6 +55,10 @@ export function setupSignalHandlers(callbacks: SignalCallbacks): void {
   process.on('SIGINT', shutdownHandler);
   process.on('SIGHUP', reloadHandler);
   process.on('SIGPIPE', ignoreHandler);
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('[bunpm] unhandled rejection:', reason);
+  });
 
   registeredHandlers.set('SIGTERM', shutdownHandler);
   registeredHandlers.set('SIGINT', shutdownHandler);

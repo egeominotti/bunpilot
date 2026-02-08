@@ -4,6 +4,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import type {
   AppConfig,
   BackoffConfig,
@@ -100,12 +101,6 @@ export const APP_DEFAULTS: Pick<
 };
 
 // ---------------------------------------------------------------------------
-// Worker Env Prefix
-// ---------------------------------------------------------------------------
-
-export const WORKER_ENV_PREFIX = 'BUNPM_';
-
-// ---------------------------------------------------------------------------
 // Heartbeat
 // ---------------------------------------------------------------------------
 
@@ -113,17 +108,10 @@ export const HEARTBEAT_INTERVAL = 10_000;
 export const HEARTBEAT_MISS_THRESHOLD = 3;
 
 // ---------------------------------------------------------------------------
-// Cleanup
+// Home Directory Bootstrap
 // ---------------------------------------------------------------------------
 
-export const METRICS_RETENTION_MS = 86_400_000; // 24 hours
-export const CLEANUP_INTERVAL_MS = 60_000; // every 60 seconds
-export const MAX_RESTART_HISTORY = 1_000;
-
-// ---------------------------------------------------------------------------
-// Log Levels
-// ---------------------------------------------------------------------------
-
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-
-export const LOG_LEVEL: LogLevel = (process.env.BUNPM_LOG_LEVEL as LogLevel) ?? 'info';
+/** Ensure the BUNPM_HOME directory tree exists. */
+export function ensureBunpmHome(): void {
+  mkdirSync(BUNPM_HOME, { recursive: true });
+}

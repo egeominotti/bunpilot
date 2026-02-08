@@ -158,12 +158,12 @@ export function createCommandHandlers(ctx: CommandContext): Map<string, Handler>
     // Respond before initiating shutdown so the client gets an ack
     const response = createResponse('', { action: 'shutting-down' });
 
-    // Schedule shutdown on next tick so the response is written first
-    queueMicrotask(() => {
+    // Schedule shutdown with a short delay so the response is flushed first
+    setTimeout(() => {
       ctx.shutdown().catch((err) => {
         console.error('[control-handlers] shutdown error:', err);
       });
-    });
+    }, 100);
 
     return response;
   });

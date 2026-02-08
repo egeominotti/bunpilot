@@ -2,15 +2,15 @@
 // bunpm – PID File Utilities
 // ---------------------------------------------------------------------------
 
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Write a PID number to the given file path. */
+/** Write a PID number to the given file path (synchronous to prevent data loss). */
 export function writePidFile(pidFile: string, pid: number): void {
-  Bun.write(pidFile, String(pid));
+  writeFileSync(pidFile, String(pid));
 }
 
 /** Read the PID from a file. Returns null when the file does not exist. */

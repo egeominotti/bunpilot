@@ -17,6 +17,7 @@ export interface ManagedApp {
   spawned: Map<number, SpawnedWorker>;
   startedAt: number | null;
   stableTimers: Map<number, ReturnType<typeof setTimeout>>;
+  nextWorkerId: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -24,6 +25,8 @@ export interface ManagedApp {
 // ---------------------------------------------------------------------------
 
 export class WorkerHandler {
+  private readonly backoffTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
   constructor(
     private readonly processManager: ProcessManager,
     private readonly crashRecovery: CrashRecovery,
@@ -97,11 +100,13 @@ export class WorkerHandler {
     }
 
     const delay = this.crashRecovery.getDelay(workerId);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      this.backoffTimers.delete(workerId);
       if (worker.state === 'crashed' || worker.state === 'errored') {
         onRestart(managed, worker);
       }
     }, delay);
+    this.backoffTimers.set(workerId, timer);
   }
 
   // -----------------------------------------------------------------------
@@ -138,8 +143,11 @@ export class WorkerHandler {
 
     await Promise.all(
       active.map(async (worker) => {
-        this.transitionWorker(worker, 'draining');
-        this.transitionWorker(worker, 'stopping');
+        // Transition through draining/stopping if the state machine allows it
+        if (this.lifecycle.canTransition(worker.state, 'draining')) {
+          this.transitionWorker(worker, 'draining');
+          this.transitionWorker(worker, 'stopping');
+        }
 
         const spawned = managed.spawned.get(worker.id);
         if (spawned) {
@@ -150,7 +158,8 @@ export class WorkerHandler {
           );
         }
 
-        this.transitionWorker(worker, 'stopped');
+        // Force state to stopped regardless of current state (shutdown is authoritative)
+        worker.state = 'stopped';
         this.clearStableTimer(managed, worker.id);
       }),
     );
@@ -193,6 +202,11 @@ export class WorkerHandler {
     }
     for (const w of managed.workers) {
       this.crashRecovery.reset(w.id);
+      const timer = this.backoffTimers.get(w.id);
+      if (timer) {
+        clearTimeout(timer);
+        this.backoffTimers.delete(w.id);
+      }
     }
   }
 

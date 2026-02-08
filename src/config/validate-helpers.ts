@@ -146,8 +146,14 @@ export function validateHealthCheck(raw: unknown, ctx: string): HealthCheckConfi
 
   return {
     enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_HEALTH_CHECK.enabled,
-    path:
-      typeof raw.path === 'string' && raw.path.length > 0 ? raw.path : DEFAULT_HEALTH_CHECK.path,
+    path: (() => {
+      const p =
+        typeof raw.path === 'string' && raw.path.length > 0 ? raw.path : DEFAULT_HEALTH_CHECK.path;
+      if (!p.startsWith('/')) {
+        throw new Error(`[${ctx}] "healthCheck.path" must start with "/". Got "${p}".`);
+      }
+      return p;
+    })(),
     interval:
       validateBoundedNumber(raw.interval, 'healthCheck.interval', ctx, 1_000, 600_000) ??
       DEFAULT_HEALTH_CHECK.interval,

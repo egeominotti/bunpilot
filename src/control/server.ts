@@ -124,19 +124,26 @@ export class ControlServer {
 
     this.handler(req.cmd, args as Record<string, unknown>)
       .then((response) => {
-        // Ensure response id matches request id
         response.id = req.id!;
-        socket.write(encodeMessage(response));
+        try {
+          socket.write(encodeMessage(response));
+        } catch {
+          // Client disconnected before response could be sent
+        }
       })
       .catch((err) => {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        socket.write(
-          encodeMessage({
-            id: req.id,
-            ok: false,
-            error: errorMsg,
-          }),
-        );
+        try {
+          socket.write(
+            encodeMessage({
+              id: req.id,
+              ok: false,
+              error: errorMsg,
+            }),
+          );
+        } catch {
+          // Client disconnected before error could be sent
+        }
       });
   }
 

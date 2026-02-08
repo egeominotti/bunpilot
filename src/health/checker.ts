@@ -192,10 +192,12 @@ export class HealthChecker {
 
   /** Stop all timers for every tracked worker. */
   stopAll(): void {
-    for (const workerId of this.timers.keys()) {
+    const timerIds = [...this.timers.keys()];
+    const hbIds = [...this.heartbeatTimers.keys()];
+    for (const workerId of timerIds) {
       this.stopChecking(workerId);
     }
-    for (const workerId of this.heartbeatTimers.keys()) {
+    for (const workerId of hbIds) {
       this.stopHeartbeatMonitor(workerId);
     }
   }

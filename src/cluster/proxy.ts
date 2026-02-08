@@ -21,10 +21,22 @@ interface WorkerSlot {
   alive: boolean;
 }
 
-/** Per-connection state attached to each public-facing socket. */
+/**
+ * Per-connection state attached to each public-facing socket.
+ *
+ * `upstream` is typed as `unknown` because Bun's internal Socket type uses
+ * `Bun.BufferSource` which is structurally incompatible with the standard DOM
+ * `BufferSource`.  We cast to a minimal interface at call sites instead.
+ */
 interface ConnState {
-  upstream: any | null;
+  upstream: unknown;
   pending: Buffer[];
+}
+
+/** Minimal interface for calling write/end on Bun sockets via cast. */
+interface WritableEnd {
+  write(data: Buffer): number;
+  end(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,7 +55,7 @@ export class ProxyCluster {
   private rrIndex = 0;
 
   /** The public-facing TCP listener. */
-  private listener: unknown = null;
+  private listener: { stop(closeActiveConnections?: boolean): void } | null = null;
 
   // -----------------------------------------------------------------------
   // Public API
@@ -67,24 +79,24 @@ export class ProxyCluster {
       socket: {
         open: (socket) => {
           socket.data = { upstream: null, pending: [] };
-          this.handleConnection(socket);
+          this.handleConnection(socket as unknown as WritableEnd & { data: ConnState });
         },
         data: (socket, data) => {
           const state = socket.data;
           if (state.upstream) {
-            state.upstream.write(data);
+            (state.upstream as WritableEnd).write(Buffer.from(data));
           } else {
             state.pending.push(Buffer.from(data));
           }
         },
         close: (socket) => {
           if (socket.data?.upstream) {
-            socket.data.upstream.end();
+            (socket.data.upstream as WritableEnd).end();
           }
         },
         error: (socket) => {
           if (socket.data?.upstream) {
-            socket.data.upstream.end();
+            (socket.data.upstream as WritableEnd).end();
           }
         },
       },
@@ -120,7 +132,7 @@ export class ProxyCluster {
   /** Stop the public listener and release all resources. */
   stop(): void {
     if (this.listener) {
-      (this.listener as any).stop();
+      this.listener.stop();
       this.listener = null;
     }
     this.workers = [];
@@ -155,7 +167,7 @@ export class ProxyCluster {
    * Handle a newly accepted public connection by piping it to an internal
    * worker port.
    */
-  private handleConnection(clientSocket: any): void {
+  private handleConnection(clientSocket: WritableEnd & { data: ConnState }): void {
     const target = this.nextAliveWorker();
     if (!target) {
       clientSocket.end();
@@ -171,12 +183,12 @@ export class ProxyCluster {
 
           // Flush any data that arrived before upstream was ready.
           for (const chunk of clientSocket.data.pending) {
-            upstream.write(chunk);
+            (upstream as unknown as WritableEnd).write(chunk);
           }
           clientSocket.data.pending.length = 0;
         },
         data: (_upstream, data) => {
-          clientSocket.write(data);
+          clientSocket.write(Buffer.from(data));
         },
         close: () => {
           clientSocket.end();

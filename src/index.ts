@@ -9,6 +9,7 @@
 
 import { parseArgs } from './cli/index';
 import { logError } from './cli/format';
+import { ensureBunpmHome } from './constants';
 
 // ---------------------------------------------------------------------------
 // ANSI helpers (local — avoid pulling the full format module for help text)
@@ -74,6 +75,8 @@ function showVersion(): void {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  ensureBunpmHome();
+
   const parsed = parseArgs(process.argv);
   const { command, args, flags } = parsed;
 

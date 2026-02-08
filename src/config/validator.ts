@@ -155,9 +155,10 @@ export function validateConfig(raw: unknown): BunpmConfig {
     throw new Error('"apps" array must contain at least one app config.');
   }
 
-  // Validate every app and check for duplicate names.
+  // Validate every app and check for duplicate names and port conflicts.
   const apps: AppConfig[] = [];
   const seenNames = new Set<string>();
+  const seenPorts = new Map<number, string>();
 
   for (let i = 0; i < rawApps.length; i++) {
     const app = validateApp(rawApps[i]);
@@ -165,6 +166,15 @@ export function validateConfig(raw: unknown): BunpmConfig {
       throw new Error(`Duplicate app name "${app.name}".`);
     }
     seenNames.add(app.name);
+
+    if (app.port !== undefined) {
+      const existing = seenPorts.get(app.port);
+      if (existing) {
+        throw new Error(`Port ${app.port} is used by both "${existing}" and "${app.name}".`);
+      }
+      seenPorts.set(app.port, app.name);
+    }
+
     apps.push(app);
   }
 
