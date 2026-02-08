@@ -1,8 +1,11 @@
 # bunpilot
 
+[![npm](https://img.shields.io/npm/v/bunpilot)](https://www.npmjs.com/package/bunpilot)
+[![license](https://img.shields.io/npm/l/bunpilot)](./LICENSE)
+
 **Bun-native process manager. PM2 for the Bun ecosystem.**
 
-A production-grade process manager built from the ground up for [Bun](https://bun.sh) — zero npm runtime dependencies, single-binary distribution, and full leverage of Bun-native APIs (`Bun.spawn`, `Bun.serve`, `bun:sqlite`).
+A process manager built from the ground up for [Bun](https://bun.sh) — zero npm runtime dependencies, single-binary distribution, and full leverage of Bun-native APIs (`Bun.spawn`, `Bun.serve`, `bun:sqlite`).
 
 ---
 
@@ -30,7 +33,13 @@ A production-grade process manager built from the ground up for [Bun](https://bu
 ## Installation
 
 ```bash
-# Clone and build
+# Install from npm
+bun add -g bunpilot
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/egeominotti/bunpilot.git
 cd bunpilot
 bun install
