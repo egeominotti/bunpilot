@@ -2,6 +2,8 @@
 
 Guidelines for Claude Code when working on this project.
 
+"When I report a bug, don't start by trying to fix it. Instead, start by writing a test that reproduces the bug. Then, have subagents try to fix the bug and prove it with a passing test."
+
 ---
 
 ## Project Overview
@@ -102,7 +104,7 @@ bun run format            # Prettier
 bun run format:check      # Prettier check
 
 # Testing
-bun test                  # Run all 266 tests
+bun test                  # Run all 497 tests
 bun test --watch          # Watch mode
 bun test test/core/       # Run specific test directory
 
@@ -122,17 +124,19 @@ Tests live in `test/` mirroring `src/` structure:
 
 ```
 test/
-├── core/          lifecycle.test.ts, backoff.test.ts
-├── config/        validator.test.ts, validate-helpers.test.ts
+├── constants.test.ts
+├── core/          lifecycle.test.ts, backoff.test.ts, worker-handler.test.ts, reload-handler.test.ts, signals.test.ts
+├── config/        validator.test.ts, validate-helpers.test.ts, loader.test.ts
 ├── cli/           parser.test.ts, format.test.ts
 ├── store/         sqlite.test.ts
-├── logs/          writer.test.ts, manager.test.ts (stub)
+├── logs/          writer.test.ts, manager.test.ts
 ├── health/        checker.test.ts
-├── metrics/       aggregator.test.ts, prometheus.test.ts
-├── control/       protocol.test.ts
+├── metrics/       aggregator.test.ts, prometheus.test.ts, http-server.test.ts
+├── control/       protocol.test.ts, handlers.test.ts, client.test.ts, server.test.ts
 ├── ipc/           protocol.test.ts
-├── daemon/        pid.test.ts
-└── cluster/       platform.test.ts, reuse-port.test.ts
+├── daemon/        pid.test.ts, daemonize.test.ts, boot.test.ts
+├── cluster/       platform.test.ts, reuse-port.test.ts, proxy.test.ts
+└── sdk/           worker.test.ts
 ```
 
 - Use `bun:test` (`describe`, `test`, `expect`, `beforeEach`, `afterEach`)

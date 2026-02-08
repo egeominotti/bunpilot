@@ -15,8 +15,15 @@ import { loadConfig } from '../config/loader';
 import { ensureBunpilotHome, SOCKET_PATH, LOGS_DIR } from '../constants';
 import { mkdirSync, readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AppConfig } from '../config/types';
+import type { AppConfig, AppStatus } from '../config/types';
 import { createErrorResponse } from '../control/protocol';
+import { SqliteStore } from '../store/sqlite';
+import { MetricsHttpServer, type MetricsDataProvider } from '../metrics/http-server';
+import {
+  formatPrometheus,
+  type AppMetricsInput,
+  type AppWorkerMetrics,
+} from '../metrics/prometheus';
 
 // ---------------------------------------------------------------------------
 // Main
@@ -26,6 +33,7 @@ async function main(): Promise<void> {
   ensureBunpilotHome();
   mkdirSync(LOGS_DIR, { recursive: true });
 
+  const store = new SqliteStore();
   const master = new MasterOrchestrator();
 
   // -- Pending configs: apps started via CLI are stored here -----------------
@@ -44,13 +52,20 @@ async function main(): Promise<void> {
       const config = pendingConfigs.get(name);
       if (!config) throw new Error(`No config found for app "${name}"`);
       pendingConfigs.delete(name);
+      store.saveApp(name, config);
       await master.startApp(config);
     },
 
-    stopApp: (name) => master.stopApp(name),
+    stopApp: (name) => {
+      store.updateAppStatus(name, 'stopped');
+      return master.stopApp(name);
+    },
     restartApp: (name) => master.restartApp(name),
     reloadApp: (name) => master.reloadApp(name),
-    deleteApp: (name) => master.deleteApp(name),
+    deleteApp: (name) => {
+      store.deleteApp(name);
+      return master.deleteApp(name);
+    },
 
     getMetrics: () => {
       return master.listApps();
@@ -68,6 +83,8 @@ async function main(): Promise<void> {
     shutdown: async () => {
       await master.shutdown('daemon-kill');
       controlServer.stop();
+      metricsServer.stop();
+      store.close();
       process.exit(0);
     },
   };
@@ -90,9 +107,24 @@ async function main(): Promise<void> {
     return handler(args);
   });
 
+  // -- Metrics HTTP server ----------------------------------------------------
+  const metricsProvider: MetricsDataProvider = {
+    getPrometheusMetrics: () => formatPrometheus(appStatusToMetricsInput(master.listApps())),
+    getJsonMetrics: (appName) => {
+      const apps = master.listApps();
+      if (appName) return apps.filter((a) => a.name === appName);
+      return apps;
+    },
+    getStatus: () => ({ apps: master.listApps(), uptime: process.uptime(), pid: process.pid }),
+  };
+
+  const metricsServer = new MetricsHttpServer(9615, metricsProvider);
+
   // -- Register cleanup on master shutdown -----------------------------------
   master.onShutdown(() => {
     controlServer.stop();
+    metricsServer.stop();
+    store.close();
   });
 
   // -- Signal handlers -------------------------------------------------------
@@ -101,6 +133,8 @@ async function main(): Promise<void> {
       console.log(`[daemon] received ${sig}, shutting down...`);
       await master.shutdown(sig);
       controlServer.stop();
+      metricsServer.stop();
+      store.close();
     },
     onReload: () => {
       console.log('[daemon] received SIGHUP, reloading all apps...');
@@ -113,6 +147,10 @@ async function main(): Promise<void> {
   // -- Start control server --------------------------------------------------
   await controlServer.start();
   console.log(`[daemon] control server listening on ${SOCKET_PATH}`);
+
+  // -- Start metrics HTTP server ---------------------------------------------
+  metricsServer.start();
+  console.log('[daemon] metrics server listening on http://127.0.0.1:9615');
 
   // -- Load config if passed as argument -------------------------------------
   const configPath = process.argv[2];
@@ -136,6 +174,37 @@ main().catch((err) => {
   console.error('[daemon] fatal error:', err);
   process.exit(1);
 });
+
+// ---------------------------------------------------------------------------
+// AppStatus -> AppMetricsInput adapter
+// ---------------------------------------------------------------------------
+
+function appStatusToMetricsInput(apps: AppStatus[]): AppMetricsInput[] {
+  return apps.map((app) => ({
+    appName: app.name,
+    workers: app.workers.map((w): AppWorkerMetrics => {
+      const uptimeSeconds = (Date.now() - w.startedAt) / 1000;
+      return {
+        workerId: w.id,
+        metrics: w.memory
+          ? {
+              memory: {
+                rss: w.memory.rss,
+                heapTotal: w.memory.heapTotal,
+                heapUsed: w.memory.heapUsed,
+                external: w.memory.external,
+              },
+              cpuPercent: w.cpu?.percentage ?? 0,
+              timestamp: w.memory.timestamp,
+            }
+          : null,
+        restartCount: w.restartCount,
+        uptime: uptimeSeconds,
+        state: w.state,
+      };
+    }),
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // Log file reader

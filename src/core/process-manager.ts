@@ -4,7 +4,8 @@
 
 import type { Subprocess } from 'bun';
 import type { AppConfig, WorkerMessage } from '../config/types';
-import { INTERNAL_ENV_KEYS } from '../constants';
+import { INTERNAL_ENV_KEYS, INTERNAL_PORT_BASE } from '../constants';
+import { detectStrategy } from '../cluster/platform';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,12 +129,33 @@ export class ProcessManager {
 
     // Inject BUNPILOT worker vars.
     base['BUNPILOT_WORKER_ID'] = String(workerId);
-    if (config.port !== undefined) {
-      base['BUNPILOT_PORT'] = String(config.port);
-    }
-    base['BUNPILOT_REUSE_PORT'] = '1';
     base['BUNPILOT_APP_NAME'] = config.name;
     base['BUNPILOT_INSTANCES'] = String(config.instances);
+
+    // Determine clustering env based on strategy.
+    const clusteringEnabled = config.clustering?.enabled !== false;
+    const instances = config.instances;
+    const isClustered = clusteringEnabled && instances !== 1;
+
+    if (isClustered && config.port !== undefined) {
+      const strategy = detectStrategy(config.clustering?.strategy ?? 'auto');
+
+      if (strategy === 'reusePort') {
+        // Linux: all workers bind to the same public port with SO_REUSEPORT.
+        base['BUNPILOT_PORT'] = String(config.port);
+        base['BUNPILOT_REUSE_PORT'] = '1';
+      } else {
+        // proxy: each worker binds to its own internal port.
+        base['BUNPILOT_PORT'] = String(INTERNAL_PORT_BASE + workerId);
+        base['BUNPILOT_REUSE_PORT'] = '0';
+      }
+    } else {
+      // Not clustered or no port configured – use config.port directly.
+      if (config.port !== undefined) {
+        base['BUNPILOT_PORT'] = String(config.port);
+      }
+      base['BUNPILOT_REUSE_PORT'] = '0';
+    }
 
     return base;
   }
