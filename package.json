@@ -1,9 +1,14 @@
 {
   "name": "bunpilot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bun-native process manager. PM2 for the Bun ecosystem.",
   "type": "module",
   "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./worker": "./src/sdk/worker.ts",
+    "./sdk/worker": "./src/sdk/worker.ts"
+  },
   "bin": {
     "bunpilot": "src/index.ts"
   },
