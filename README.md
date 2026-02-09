@@ -5,6 +5,8 @@
 
 **Bun-native process manager. PM2 for the Bun ecosystem.**
 
+> **Warning:** This project is still experimental. APIs and configuration may change between minor versions. Use in production at your own risk.
+
 A process manager built from the ground up for [Bun](https://bun.sh) — zero npm runtime dependencies, single-binary distribution, and full leverage of Bun-native APIs (`Bun.spawn`, `Bun.serve`, `bun:sqlite`).
 
 ---
