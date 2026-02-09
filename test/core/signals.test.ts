@@ -105,6 +105,23 @@ describe('setupSignalHandlers', () => {
     expect(removedSignals).toContain('SIGPIPE');
   });
 
+  test('removeSignalHandlers removes unhandledRejection listener (Bug 10)', () => {
+    const callbacks: SignalCallbacks = {
+      onShutdown: () => {},
+      onReload: () => {},
+    };
+
+    setupSignalHandlers(callbacks);
+
+    // Clear the tracking to isolate the remove calls
+    removedSignals = [];
+
+    removeSignalHandlers();
+
+    // Should also remove unhandledRejection
+    expect(removedSignals).toContain('unhandledRejection');
+  });
+
   test('removeSignalHandlers is a no-op when no handlers are registered', () => {
     // Call remove without setup first — should not throw
     removeSignalHandlers();

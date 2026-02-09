@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, rmSync, mkdirSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { LogManager } from '../../src/logs/manager';
@@ -152,5 +152,111 @@ describe('LogManager', () => {
     expect(existsSync(errPath)).toBe(true);
 
     manager.closeAll();
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug 5: pipeOutput creates duplicate writers that leak
+  // -----------------------------------------------------------------------
+
+  test('createWriters closes old writers when called again for the same key', async () => {
+    const manager = new LogManager(tempDir);
+    const config = makeLogsConfig();
+
+    // First call creates writers
+    const { stdout: w1, stderr: w1err } = manager.createWriters('app', 0, config);
+    await w1.write('first writer\n');
+
+    // Second call for the same app:workerId should close old writers
+    const { stdout: w2, stderr: w2err } = manager.createWriters('app', 0, config);
+    await w2.write('second writer\n');
+
+    // Old writer should be closed — writing to it should be a no-op
+    await w1.write('should not appear\n');
+
+    const content = readFileSync(join(tempDir, 'app', 'app-0-out.log'), 'utf-8');
+    expect(content).toContain('first writer');
+    expect(content).toContain('second writer');
+    expect(content).not.toContain('should not appear');
+
+    manager.closeAll();
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug 7: Custom log filenames collide across workers
+  // -----------------------------------------------------------------------
+
+  test('custom outFile gets workerId suffix for workers > 0', async () => {
+    const manager = new LogManager(tempDir);
+    const config = makeLogsConfig({
+      outFile: 'app.log',
+      errFile: 'app-err.log',
+    });
+
+    // Worker 0 uses the raw filename
+    const { stdout: w0 } = manager.createWriters('myapp', 0, config);
+    await w0.write('worker 0\n');
+
+    // Worker 1 should get a distinct filename
+    const { stdout: w1 } = manager.createWriters('myapp', 1, config);
+    await w1.write('worker 1\n');
+
+    const appDir = join(tempDir, 'myapp');
+
+    // Worker 0 uses the original filename
+    expect(existsSync(join(appDir, 'app.log'))).toBe(true);
+
+    // Worker 1 should use a different filename with workerId
+    expect(existsSync(join(appDir, 'app-1.log'))).toBe(true);
+
+    const w0Content = readFileSync(join(appDir, 'app.log'), 'utf-8');
+    const w1Content = readFileSync(join(appDir, 'app-1.log'), 'utf-8');
+
+    expect(w0Content).toBe('worker 0\n');
+    expect(w1Content).toBe('worker 1\n');
+
+    manager.closeAll();
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug 8: pipeStream silently swallows all errors
+  // -----------------------------------------------------------------------
+
+  test('pipeStream logs unexpected errors to stderr', async () => {
+    const manager = new LogManager(tempDir);
+    const config = makeLogsConfig();
+
+    // Create a stream that errors with an unexpected filesystem error
+    const errorStream = new ReadableStream({
+      start(controller) {
+        controller.error(new Error('ENOSPC: disk full'));
+      },
+    });
+
+    const normalStream = new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    });
+
+    // Capture stderr output
+    const originalStderrWrite = process.stderr.write;
+    let capturedStderr = '';
+    process.stderr.write = ((chunk: string | Buffer) => {
+      capturedStderr += typeof chunk === 'string' ? chunk : chunk.toString();
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      manager.pipeOutput('err-app', 0, errorStream, normalStream, config, false);
+
+      // Wait for the async piping to process the error
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Should have logged the unexpected error
+      expect(capturedStderr).toContain('ENOSPC');
+    } finally {
+      process.stderr.write = originalStderrWrite;
+      manager.closeAll();
+    }
   });
 });

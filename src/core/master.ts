@@ -99,7 +99,17 @@ export class MasterOrchestrator {
 
   async restartApp(name: string, _force = false): Promise<void> {
     const managed = this.getManaged(name);
+
+    // Bug 7 fix: Stop health checking and heartbeat monitoring before reset.
+    for (const worker of managed.workers) {
+      this.healthChecker.stopChecking(worker.id);
+      this.healthChecker.stopHeartbeatMonitor(worker.id);
+    }
+
     await this.workerHandler.stopAllWorkers(managed);
+
+    // Bug 6 fix: Clear stable timers and backoff timers from old generation.
+    this.workerHandler.cleanupApp(managed);
 
     const instances = this.resolveInstances(managed.config.instances);
 
@@ -256,7 +266,23 @@ export class MasterOrchestrator {
   }
 
   private restartWorker(managed: ManagedApp, worker: WorkerInfo): void {
-    this.workerHandler.transitionWorker(worker, 'spawning');
+    // Bug 2 fix: Kill old process before spawning replacement.
+    const oldSpawned = managed.spawned.get(worker.id);
+    if (oldSpawned && this.processManager.isRunning(oldSpawned.pid)) {
+      this.processManager.killWorker(
+        oldSpawned.pid,
+        managed.config.shutdownSignal,
+        managed.config.killTimeout,
+      );
+    }
+
+    // Bug 3 fix: For non-standard restart paths (online/starting -> spawning),
+    // force the state to 'stopped' first so the transition to 'spawning' is valid.
+    if (!this.workerHandler.transitionWorker(worker, 'spawning')) {
+      worker.state = 'stopped';
+      this.workerHandler.transitionWorker(worker, 'spawning');
+    }
+
     worker.restartCount += 1;
     managed.spawned.delete(worker.id);
 

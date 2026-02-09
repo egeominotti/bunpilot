@@ -80,8 +80,9 @@ export class ControlServer {
           this.clients.delete(socket);
         },
 
-        error: (_socket, err) => {
+        error: (socket, err) => {
           console.error('[control-server] socket error:', err.message);
+          this.clients.delete(socket);
         },
       },
     });

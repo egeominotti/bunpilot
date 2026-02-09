@@ -586,6 +586,75 @@ describe('ProcessManager', () => {
   // Edge cases
   // -------------------------------------------------------------------------
 
+  describe('clustering not explicitly enabled (Bug 9)', () => {
+    test('multi-instance app without clustering config uses configured port, not internal port', async () => {
+      const script = writeWorkerScript(
+        'env-port-nocluster.ts',
+        `
+        const port = process.env.BUNPILOT_PORT;
+        const reusePort = process.env.BUNPILOT_REUSE_PORT;
+        process.send?.({ type: 'custom', channel: 'env', data: { port, reusePort } });
+        setTimeout(() => process.exit(0), 500);
+        `,
+      );
+      // Multiple instances, port configured, but NO clustering config at all
+      const config = makeConfig({ script, port: 3000, instances: 4 });
+      // Explicitly no clustering config (undefined)
+      delete (config as any).clustering;
+
+      const msg = await new Promise<WorkerMessage>((resolve) => {
+        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
+          resolve(m);
+        }, () => {});
+        spawnedPids.push(spawned.pid);
+      });
+
+      expect(msg).toHaveProperty('type', 'custom');
+      if (msg.type === 'custom') {
+        const data = msg.data as Record<string, string>;
+        // Without explicit clustering enabled, should use the configured port directly
+        expect(data.port).toBe('3000');
+        expect(data.reusePort).toBe('0');
+      }
+    });
+
+    test('multi-instance app with clustering explicitly enabled uses internal port', async () => {
+      const script = writeWorkerScript(
+        'env-port-cluster.ts',
+        `
+        const port = process.env.BUNPILOT_PORT;
+        process.send?.({ type: 'custom', channel: 'env', data: { port } });
+        setTimeout(() => process.exit(0), 500);
+        `,
+      );
+      // Multiple instances with clustering EXPLICITLY enabled
+      const config = makeConfig({
+        script,
+        port: 3000,
+        instances: 4,
+        clustering: {
+          enabled: true,
+          strategy: 'proxy',
+          rollingRestart: { batchSize: 1, batchDelay: 1000 },
+        },
+      });
+
+      const msg = await new Promise<WorkerMessage>((resolve) => {
+        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
+          resolve(m);
+        }, () => {});
+        spawnedPids.push(spawned.pid);
+      });
+
+      expect(msg).toHaveProperty('type', 'custom');
+      if (msg.type === 'custom') {
+        const data = msg.data as Record<string, string>;
+        // With clustering enabled and proxy strategy, should use internal port
+        expect(data.port).toBe(String(40001)); // INTERNAL_PORT_BASE + workerId(0)
+      }
+    });
+  });
+
   describe('edge cases', () => {
     test('multiple workers can be spawned concurrently', async () => {
       const script = writeWorkerScript(

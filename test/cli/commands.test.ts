@@ -467,6 +467,75 @@ describe('startCommand', () => {
       (tracker.calls[0].args as Record<string, unknown>).config,
     ).toHaveProperty('name', 'api');
   });
+
+  // Bug 3: parseInt produces NaN for invalid CLI flags
+  test('exits with error for invalid --instances value', async () => {
+    const tracker = buildConnectMock({});
+
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+    mock.module('../../src/config/loader', () => ({
+      loadConfig: async () => ({ apps: [] }),
+      loadFromCLI: () => ({
+        name: 'test-app',
+        script: 'app.ts',
+        instances: 1,
+        maxRestarts: 10,
+        maxRestartWindow: 60000,
+        minUptime: 1000,
+        backoff: { initial: 100, multiplier: 2, max: 30000 },
+        killTimeout: 5000,
+        shutdownSignal: 'SIGTERM',
+        readyTimeout: 10000,
+      }),
+    }));
+
+    const { startCommand } = await import('../../src/cli/commands/start');
+    captured = captureConsole();
+
+    try {
+      await startCommand(['app.ts'], { instances: 'abc' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --instances');
+  });
+
+  test('exits with error for invalid --port value', async () => {
+    const tracker = buildConnectMock({});
+
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+    mock.module('../../src/config/loader', () => ({
+      loadConfig: async () => ({ apps: [] }),
+      loadFromCLI: () => ({
+        name: 'test-app',
+        script: 'app.ts',
+        instances: 1,
+        maxRestarts: 10,
+        maxRestartWindow: 60000,
+        minUptime: 1000,
+        backoff: { initial: 100, multiplier: 2, max: 30000 },
+        killTimeout: 5000,
+        shutdownSignal: 'SIGTERM',
+        readyTimeout: 10000,
+      }),
+    }));
+
+    const { startCommand } = await import('../../src/cli/commands/start');
+    captured = captureConsole();
+
+    try {
+      await startCommand(['app.ts'], { port: 'xyz' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --port');
+  });
 });
 
 // ===========================================================================
@@ -1151,6 +1220,43 @@ describe('listCommand', () => {
     expect(tableOutput).toContain('stopped-app');
     // The em dash for missing PID
     expect(tableOutput).toContain('\u2014');
+  });
+
+  // Bug 2: errored status should display as "errored", not "stopped"
+  test('displays "errored" status for errored apps with no workers', async () => {
+    const app: AppStatus = {
+      name: 'errored-app',
+      status: 'errored',
+      workers: [],
+      config: {
+        name: 'errored-app',
+        script: 'errored.ts',
+        instances: 1,
+        maxRestarts: 10,
+        maxRestartWindow: 60000,
+        minUptime: 1000,
+        backoff: { initial: 100, multiplier: 2, max: 30000 },
+        killTimeout: 5000,
+        shutdownSignal: 'SIGTERM',
+        readyTimeout: 10000,
+      },
+      startedAt: Date.now(),
+    };
+    const tracker = buildConnectMock({
+      defaultResult: { id: 'mock-id', ok: true, data: [app] },
+    });
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+
+    const { listCommand } = await import('../../src/cli/commands/list');
+    captured = captureConsole();
+    await listCommand([], {});
+
+    const tableOutput = captured.logs.find((l) => l.includes('NAME'));
+    expect(tableOutput).toBeDefined();
+    expect(tableOutput).toContain('errored');
+    // Should NOT show as "stopped"
+    // Note: We can't easily check the exact absence because "stopped" might appear
+    // in other parts. We verify "errored" is present.
   });
 
   test('shows worker with null memory and cpu as dashes', async () => {

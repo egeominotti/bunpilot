@@ -80,6 +80,17 @@ async function main(): Promise<void> {
   const parsed = parseArgs(process.argv);
   const { command, args, flags } = parsed;
 
+  // ---- Handle --help / --version before routing to commands ----
+  if (flags.help) {
+    showHelp();
+    return;
+  }
+
+  if (flags.version) {
+    showVersion();
+    return;
+  }
+
   try {
     switch (command) {
       // -- Process commands --------------------------------------------------
@@ -170,11 +181,7 @@ async function main(): Promise<void> {
       // -- No command / fallback ---------------------------------------------
 
       case '': {
-        if (flags.version) {
-          showVersion();
-        } else {
-          showHelp();
-        }
+        showHelp();
         break;
       }
 

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -42,6 +43,33 @@ export function isProcessRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify that the process with the given PID is a bunpilot/bun process.
+ * Guards against PID reuse where an unrelated process may have taken the PID.
+ * On macOS uses `ps -p PID -o command=`, on Linux reads `/proc/{pid}/cmdline`.
+ */
+export function isBunpilotProcess(pid: number): boolean {
+  try {
+    // First check if the process exists at all
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+
+  try {
+    if (process.platform === 'linux') {
+      const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
+      return cmdline.includes('bun') || cmdline.includes('bunpilot');
+    }
+
+    // macOS / other Unix: use ps
+    const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8' }).trim();
+    return cmd.includes('bun') || cmd.includes('bunpilot');
   } catch {
     return false;
   }

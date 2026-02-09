@@ -199,6 +199,32 @@ describe('MetricsHttpServer', () => {
   });
 
   // -----------------------------------------------------------------------
+  // 400 for malformed percent-encoding (Bug 12)
+  // -----------------------------------------------------------------------
+
+  describe('malformed percent-encoding', () => {
+    test('returns 400 for malformed percent-encoding in app name', async () => {
+      port = randomPort();
+      server = new MetricsHttpServer(port, makeProvider());
+      server.start();
+
+      const res = await fetch(`http://127.0.0.1:${port}/api/metrics/%ZZ`);
+      expect(res.status).toBe(400);
+      const body = await res.text();
+      expect(body).toContain('Bad Request');
+    });
+
+    test('returns 400 for incomplete percent-encoding', async () => {
+      port = randomPort();
+      server = new MetricsHttpServer(port, makeProvider());
+      server.start();
+
+      const res = await fetch(`http://127.0.0.1:${port}/api/metrics/%E0%A4%`);
+      expect(res.status).toBe(400);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // 405 for non-GET methods
   // -----------------------------------------------------------------------
 

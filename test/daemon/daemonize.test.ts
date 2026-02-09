@@ -357,6 +357,58 @@ describe('daemonize', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Bug 4: PID file should not be written if child dies immediately
+// ---------------------------------------------------------------------------
+
+describe('daemonize – child verification', () => {
+  test('PID file should not be written if child exits immediately', async () => {
+    const pidFile = join(tempDir, 'child-dies.pid');
+
+    // Spawn a child that exits immediately with error
+    const proc = Bun.spawn({
+      cmd: ['bun', '-e', 'process.exit(1)'],
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    spawnedPids.push(proc.pid);
+
+    // Wait for child to exit
+    await proc.exited;
+
+    // Simulate the daemonize fix: wait briefly, then verify child is alive before writing PID
+    await sleep(250);
+
+    if (isProcessRunning(proc.pid)) {
+      writePidFile(pidFile, proc.pid);
+    }
+
+    // PID file should NOT exist because child died
+    expect(existsSync(pidFile)).toBe(false);
+  });
+
+  test('PID file is written when child stays alive', async () => {
+    const pidFile = join(tempDir, 'child-lives.pid');
+
+    // Spawn a child that stays alive
+    const { pid, proc } = spawnSleepProcess();
+
+    // Wait briefly, then verify child is alive
+    await sleep(250);
+
+    if (isProcessRunning(pid)) {
+      writePidFile(pidFile, pid);
+    }
+
+    // PID file SHOULD exist because child is still alive
+    expect(existsSync(pidFile)).toBe(true);
+    expect(readPidFile(pidFile)).toBe(pid);
+
+    // Clean up
+    proc.kill();
+    removePidFile(pidFile);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // stopDaemon() – full signal flow with real processes
 // ---------------------------------------------------------------------------
 

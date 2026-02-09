@@ -165,4 +165,29 @@ describe('extractEnv', () => {
     const env = extractEnv(parsed.flags);
     expect(env).toEqual({ DB_HOST: 'localhost', DB_PORT: '5432' });
   });
+
+  // Bug 6: --env malformed input should throw
+  test('throws for --env without = sign', () => {
+    expect(() =>
+      parseArgs(['bun', 'script', 'start', '--env', 'MY_VAR']),
+    ).toThrow('Invalid --env format: "MY_VAR". Expected KEY=VALUE.');
+  });
+
+  test('throws for --env with = at position 0', () => {
+    expect(() =>
+      parseArgs(['bun', 'script', 'start', '--env', '=value']),
+    ).toThrow('Invalid --env format: "=value". Expected KEY=VALUE.');
+  });
+
+  test('accepts --env with = in value part', () => {
+    const parsed = parseArgs([
+      'bun',
+      'script',
+      'start',
+      '--env',
+      'KEY=val=ue',
+    ]);
+    const env = extractEnv(parsed.flags);
+    expect(env).toEqual({ KEY: 'val=ue' });
+  });
 });

@@ -862,4 +862,146 @@ describe('HealthChecker', () => {
       checker.stopAll();
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Bug regression: concurrent performCheck race condition (Bug #1)
+  // -----------------------------------------------------------------------
+
+  describe('concurrent performCheck guard', () => {
+    test('overlapping async checks do not double-fire unhealthy callback', async () => {
+      // Slow server that takes longer than the check interval to respond,
+      // always returning 503. Without a guard, two in-flight checks can
+      // both independently reach the threshold and fire emitUnhealthy.
+      const port = 19_500 + Math.floor(Math.random() * 500);
+      const workerId = port - INTERNAL_PORT_BASE;
+
+      const srv = Bun.serve({
+        port,
+        async fetch() {
+          // Respond slowly - longer than the interval
+          await new Promise((r) => setTimeout(r, 120));
+          return new Response('Error', { status: 503 });
+        },
+      });
+      servers.push(srv);
+
+      const calls: Array<{ workerId: number; reason: string }> = [];
+      checker.onUnhealthy((id, reason) => calls.push({ workerId: id, reason }));
+
+      const config = makeConfig({
+        healthCheck: {
+          enabled: true,
+          path: '/health',
+          interval: 50, // interval < server response time => overlapping checks
+          timeout: 500,
+          unhealthyThreshold: 2,
+        },
+        clustering: {
+          enabled: true,
+          strategy: 'proxy',
+          rollingRestart: { batchSize: 1, batchDelay: 1_000 },
+        },
+      });
+
+      checker.startChecking(workerId, config);
+
+      // Wait long enough for multiple overlapping checks
+      await new Promise((r) => setTimeout(r, 800));
+
+      checker.stopChecking(workerId);
+
+      // With the guard, unhealthy should fire at most once (exact threshold match)
+      expect(calls.length).toBeLessThanOrEqual(1);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug regression: unhealthy fires repeatedly instead of once (Bug #2)
+  // -----------------------------------------------------------------------
+
+  describe('unhealthy fires only once at threshold', () => {
+    test('unhealthy callback fires exactly once, not on every subsequent failure', async () => {
+      const port = INTERNAL_PORT_BASE + 150; // nothing listening here
+      const calls: Array<{ workerId: number; reason: string }> = [];
+      checker.onUnhealthy((id, reason) => calls.push({ workerId: id, reason }));
+
+      const config = makeConfig({
+        healthCheck: {
+          enabled: true,
+          path: '/health',
+          interval: 30,
+          timeout: 20,
+          unhealthyThreshold: 2,
+        },
+        clustering: {
+          enabled: true,
+          strategy: 'proxy',
+          rollingRestart: { batchSize: 1, batchDelay: 1_000 },
+        },
+      });
+
+      checker.startChecking(150, config);
+
+      // Wait for many intervals - well past threshold of 2
+      await new Promise((r) => setTimeout(r, 500));
+
+      checker.stopChecking(150);
+
+      // Bug: with >= threshold, unhealthy fires every interval after threshold.
+      // Fix: with === threshold, it should fire exactly once.
+      expect(calls.length).toBe(1);
+      expect(calls[0].workerId).toBe(150);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug regression: no immediate first health check (Bug #3)
+  // -----------------------------------------------------------------------
+
+  describe('immediate first health check', () => {
+    test('first health check runs immediately, not after one interval delay', async () => {
+      const port = 19_500 + Math.floor(Math.random() * 500);
+      const workerId = port - INTERNAL_PORT_BASE;
+
+      let firstRequestTime: number | null = null;
+      const startTime = Date.now();
+
+      const srv = Bun.serve({
+        port,
+        fetch() {
+          if (firstRequestTime === null) {
+            firstRequestTime = Date.now();
+          }
+          return new Response('OK', { status: 200 });
+        },
+      });
+      servers.push(srv);
+
+      const config = makeConfig({
+        healthCheck: {
+          enabled: true,
+          path: '/health',
+          interval: 5_000, // very long interval
+          timeout: 1_000,
+          unhealthyThreshold: 3,
+        },
+        clustering: {
+          enabled: true,
+          strategy: 'proxy',
+          rollingRestart: { batchSize: 1, batchDelay: 1_000 },
+        },
+      });
+
+      checker.startChecking(workerId, config);
+
+      // Wait a bit - but much less than the 5s interval
+      await new Promise((r) => setTimeout(r, 500));
+
+      checker.stopChecking(workerId);
+
+      // The first request should have arrived almost immediately, not after 5s
+      expect(firstRequestTime).not.toBeNull();
+      expect(firstRequestTime! - startTime).toBeLessThan(1_000);
+    });
+  });
 });

@@ -53,13 +53,31 @@ export async function startCommand(
     process.exit(1);
   }
 
-  const instances = flags.instances
-    ? flags.instances === 'max'
-      ? 'max'
-      : parseInt(String(flags.instances), 10)
-    : undefined;
+  let instances: number | 'max' | undefined;
+  if (flags.instances) {
+    if (flags.instances === 'max') {
+      instances = 'max';
+    } else {
+      const parsed = parseInt(String(flags.instances), 10);
+      if (Number.isNaN(parsed)) {
+        logError(
+          `Invalid --instances value: "${String(flags.instances)}". Expected a number or "max".`,
+        );
+        process.exit(1);
+      }
+      instances = parsed;
+    }
+  }
 
-  const port = flags.port ? parseInt(String(flags.port), 10) : undefined;
+  let port: number | undefined;
+  if (flags.port) {
+    const parsed = parseInt(String(flags.port), 10);
+    if (Number.isNaN(parsed)) {
+      logError(`Invalid --port value: "${String(flags.port)}". Expected a number.`);
+      process.exit(1);
+    }
+    port = parsed;
+  }
   const env = extractEnv(flags);
 
   config = loadFromCLI({

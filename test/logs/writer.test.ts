@@ -148,4 +148,46 @@ describe('LogWriter', () => {
 
     writer.close();
   });
+
+  // -----------------------------------------------------------------------
+  // Bug 6: Rotation race condition with concurrent writers
+  // -----------------------------------------------------------------------
+
+  test('concurrent writes do not corrupt rotation', async () => {
+    const writer = new LogWriter(logPath(), 30, 3);
+
+    // Fire multiple concurrent writes that each exceed the maxSize threshold.
+    // Without a rotation guard, both would try to rotate simultaneously.
+    const p1 = writer.write('A'.repeat(35) + '\n');
+    const p2 = writer.write('B'.repeat(35) + '\n');
+
+    // Should not throw or corrupt files
+    await Promise.all([p1, p2]);
+
+    // At least one rotated file should exist
+    expect(existsSync(`${logPath()}.1`)).toBe(true);
+
+    // No crash or corruption
+    writer.close();
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug 9: Large single write exceeds maxSize before rotation
+  // -----------------------------------------------------------------------
+
+  test('large write triggers rotation after write if size exceeded', async () => {
+    // maxSize = 50, but we write a 200-byte chunk in one go
+    const writer = new LogWriter(logPath(), 50, 3);
+
+    await writer.write('X'.repeat(200) + '\n');
+
+    // After write, the post-write check should have rotated the oversized file
+    expect(existsSync(`${logPath()}.1`)).toBe(true);
+
+    // The rotated file should contain the large payload
+    const rotatedContent = readFileSync(`${logPath()}.1`, 'utf-8');
+    expect(rotatedContent).toContain('X'.repeat(200));
+
+    writer.close();
+  });
 });

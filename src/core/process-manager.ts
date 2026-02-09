@@ -133,7 +133,7 @@ export class ProcessManager {
     base['BUNPILOT_INSTANCES'] = String(config.instances);
 
     // Determine clustering env based on strategy.
-    const clusteringEnabled = config.clustering?.enabled !== false;
+    const clusteringEnabled = config.clustering?.enabled === true;
     const instances = config.instances;
     const isClustered = clusteringEnabled && instances !== 1;
 

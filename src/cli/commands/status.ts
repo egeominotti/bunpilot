@@ -25,7 +25,12 @@ export async function statusCommand(
   // ---- App-level info ----
   console.log('');
   log('app', app.name);
-  log('status', formatState(app.status === 'running' ? 'online' : 'stopped'));
+  log(
+    'status',
+    formatState(
+      app.status === 'running' ? 'online' : app.status === 'errored' ? 'errored' : 'stopped',
+    ),
+  );
   log('script', app.config.script);
   log('instances', String(app.config.instances));
 

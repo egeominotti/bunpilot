@@ -249,6 +249,23 @@ describe('statusCommand', () => {
     expect(allOutput).toContain('stopped');
   });
 
+  // Bug 2: errored status should display as "errored", not "stopped"
+  test('shows "errored" state when app status is errored', async () => {
+    const appStatus = makeAppStatus({ status: 'errored', startedAt: null });
+
+    mockConnect({
+      sendCommand: async () => ({ id: '1', ok: true, data: appStatus }),
+    });
+
+    const { statusCommand } = await import('../../../src/cli/commands/status');
+
+    captured = captureConsole();
+    await statusCommand(['test-app'], {});
+
+    const allOutput = captured.logs.join('\n');
+    expect(allOutput).toContain('errored');
+  });
+
   test('does not print port when port is not defined', async () => {
     const appStatus = makeAppStatus({
       config: makeAppConfig({ port: undefined }),
@@ -471,6 +488,27 @@ describe('logsCommand', () => {
     }
 
     expect(exitCalls).toContain(1);
+  });
+
+  // Bug 3: Invalid --lines value should exit with error
+  test('exits with error for invalid --lines value', async () => {
+    mockConnect({
+      sendCommand: async () => ({ id: '1', ok: true, data: [] }),
+    });
+
+    const { logsCommand } = await import('../../../src/cli/commands/logs');
+
+    captured = captureConsole();
+
+    try {
+      await logsCommand(['my-app'], { lines: 'abc' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --lines');
   });
 
   test('sends command name "logs" to daemon', async () => {

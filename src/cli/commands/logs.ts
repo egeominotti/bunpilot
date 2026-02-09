@@ -24,7 +24,16 @@ export async function logsCommand(
   flags: Record<string, string | boolean>,
 ): Promise<void> {
   const name = requireArg(args, 'app-name');
-  const lines = flags.lines ? parseInt(String(flags.lines), 10) : DEFAULT_LINES;
+
+  let lines = DEFAULT_LINES;
+  if (flags.lines) {
+    const parsed = parseInt(String(flags.lines), 10);
+    if (Number.isNaN(parsed)) {
+      console.error(`Invalid --lines value: "${String(flags.lines)}". Expected a number.`);
+      process.exit(1);
+    }
+    lines = parsed;
+  }
 
   const res = await sendCommand('logs', { name, lines }, { silent: true });
   const logLines = (res.data as string[]) ?? [];
@@ -39,7 +48,7 @@ export async function logsCommand(
 
   // ---- Follow mode (--follow / -f) ----
   if (flags.follow || flags.f) {
-    let lastLineCount = logLines.length;
+    let lastSeenLine = logLines.length > 0 ? logLines[logLines.length - 1] : null;
 
     const poll = setInterval(async () => {
       try {
@@ -50,13 +59,39 @@ export async function logsCommand(
         );
         const newLines = (newRes.data as string[]) ?? [];
 
-        if (newLines.length > lastLineCount) {
-          const delta = newLines.slice(lastLineCount);
-          for (const line of delta) {
-            process.stdout.write(line + '\n');
-          }
-          lastLineCount = newLines.length;
+        if (newLines.length === 0) {
+          lastSeenLine = null;
+          return;
         }
+
+        // Find where the last seen line appears in the new batch
+        let startIdx = newLines.length; // default: nothing new
+        if (lastSeenLine === null) {
+          // First poll after empty initial fetch — show everything
+          startIdx = 0;
+        } else {
+          // Search backwards from the position we'd expect the last line to be
+          let found = false;
+          for (let i = newLines.length - 1; i >= 0; i--) {
+            if (newLines[i] === lastSeenLine) {
+              startIdx = i + 1;
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            // Log rotation happened or last line is gone — show everything new
+            startIdx = 0;
+          }
+        }
+
+        if (startIdx < newLines.length) {
+          for (let i = startIdx; i < newLines.length; i++) {
+            process.stdout.write(newLines[i] + '\n');
+          }
+        }
+
+        lastSeenLine = newLines[newLines.length - 1];
       } catch {
         // Connection error during polling — silently retry next interval
       }

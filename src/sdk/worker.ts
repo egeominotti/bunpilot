@@ -72,11 +72,9 @@ export function bunpilotStartMetrics(interval: number = 5_000): void {
   // Avoid duplicate intervals
   if (metricsTimer !== null) return;
 
-  let prevCpuUsage = process.cpuUsage();
-
   metricsTimer = setInterval(() => {
     const mem = process.memoryUsage();
-    const cpuNow = process.cpuUsage(prevCpuUsage);
+    const cpuNow = process.cpuUsage();
 
     send({
       type: 'metrics',
@@ -93,8 +91,6 @@ export function bunpilotStartMetrics(interval: number = 5_000): void {
         },
       },
     });
-
-    prevCpuUsage = process.cpuUsage();
   }, interval);
 
   // Unref so the timer does not prevent the process from exiting

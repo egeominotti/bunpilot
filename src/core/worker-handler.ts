@@ -99,10 +99,17 @@ export class WorkerHandler {
       return;
     }
 
+    // Bug 5 fix: Clear existing backoff timer before setting a new one.
+    const existingTimer = this.backoffTimers.get(workerId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.backoffTimers.delete(workerId);
+    }
+
     const delay = this.crashRecovery.getDelay(workerId);
     const timer = setTimeout(() => {
       this.backoffTimers.delete(workerId);
-      if (worker.state === 'crashed' || worker.state === 'errored') {
+      if (worker.state === 'crashed') {
         onRestart(managed, worker);
       }
     }, delay);
@@ -114,11 +121,17 @@ export class WorkerHandler {
   // -----------------------------------------------------------------------
 
   async drainAndStopWorker(managed: ManagedApp, worker: WorkerInfo): Promise<void> {
-    if (worker.state !== 'online') return;
+    // Already stopped — nothing to do.
+    if (worker.state === 'stopped' || worker.state === 'errored') return;
 
-    this.transitionWorker(worker, 'draining');
-    this.transitionWorker(worker, 'stopping');
+    // For online workers, go through the proper drain path.
+    if (worker.state === 'online') {
+      this.transitionWorker(worker, 'draining');
+      this.transitionWorker(worker, 'stopping');
+    }
 
+    // Bug 8 fix: For non-online workers (starting, spawning, etc.),
+    // still kill the process and force the state to stopped.
     const spawned = managed.spawned.get(worker.id);
     if (spawned) {
       await this.processManager.killWorker(
@@ -128,7 +141,10 @@ export class WorkerHandler {
       );
     }
 
-    this.transitionWorker(worker, 'stopped');
+    // Use state machine if possible, otherwise force stopped.
+    if (!this.transitionWorker(worker, 'stopped')) {
+      worker.state = 'stopped';
+    }
     managed.spawned.delete(worker.id);
   }
 
@@ -137,6 +153,15 @@ export class WorkerHandler {
   // -----------------------------------------------------------------------
 
   async stopAllWorkers(managed: ManagedApp): Promise<void> {
+    // Bug 5 fix: Clear all backoff timers to prevent stale restarts.
+    for (const worker of managed.workers) {
+      const timer = this.backoffTimers.get(worker.id);
+      if (timer) {
+        clearTimeout(timer);
+        this.backoffTimers.delete(worker.id);
+      }
+    }
+
     const active = managed.workers.filter(
       (w) => w.state !== 'stopped' && w.state !== 'errored' && w.state !== 'crashed',
     );
@@ -214,12 +239,14 @@ export class WorkerHandler {
   // Shared utility
   // -----------------------------------------------------------------------
 
-  transitionWorker(worker: WorkerInfo, to: WorkerState): void {
+  transitionWorker(worker: WorkerInfo, to: WorkerState): boolean {
     const from = worker.state;
     if (this.lifecycle.canTransition(from, to)) {
       this.lifecycle.transition(worker.id, from, to);
       worker.state = to;
+      return true;
     }
+    return false;
   }
 
   findWorker(managed: ManagedApp, workerId: number): WorkerInfo | undefined {

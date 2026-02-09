@@ -4,7 +4,13 @@
 
 import { resolve } from 'node:path';
 import { PID_FILE } from '../constants';
-import { writePidFile, readPidFile, removePidFile, isProcessRunning } from './pid';
+import {
+  writePidFile,
+  readPidFile,
+  removePidFile,
+  isProcessRunning,
+  isBunpilotProcess,
+} from './pid';
 
 // ---------------------------------------------------------------------------
 // daemonize
@@ -18,7 +24,7 @@ import { writePidFile, readPidFile, removePidFile, isProcessRunning } from './pi
  * 3. Unrefs the child so the parent can exit cleanly
  * 4. Exits the current (parent) process
  */
-export function daemonize(configPath: string): void {
+export async function daemonize(configPath: string): Promise<void> {
   const bootScript = resolve(import.meta.dir, 'boot.ts');
 
   const child = Bun.spawn({
@@ -31,6 +37,14 @@ export function daemonize(configPath: string): void {
   });
 
   const pid = child.pid;
+
+  // Wait briefly and verify the child survived before writing PID file
+  await sleep(200);
+
+  if (!isProcessRunning(pid)) {
+    console.error(`bunpilot daemon failed to start (pid ${pid} exited immediately)`);
+    process.exit(1);
+  }
 
   writePidFile(PID_FILE, pid);
   child.unref();
@@ -64,6 +78,13 @@ export async function stopDaemon(): Promise<boolean> {
     console.log(`Daemon (pid ${pid}) is not running – cleaning up stale PID file`);
     removePidFile(PID_FILE);
     return true;
+  }
+
+  // Verify the process is actually bunpilot (guard against PID reuse)
+  if (!isBunpilotProcess(pid)) {
+    console.log(`PID ${pid} is not a bunpilot process – cleaning up stale PID file`);
+    removePidFile(PID_FILE);
+    return false;
   }
 
   // Send graceful termination signal

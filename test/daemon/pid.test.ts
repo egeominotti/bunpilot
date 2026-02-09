@@ -12,6 +12,7 @@ import {
   readPidFile,
   removePidFile,
   isProcessRunning,
+  isBunpilotProcess,
   checkStalePid,
 } from '../../src/daemon/pid';
 
@@ -91,6 +92,37 @@ describe('isProcessRunning', () => {
   test('returns false for a non-existent PID', () => {
     // Use a very high PID that almost certainly does not exist
     expect(isProcessRunning(99999999)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isBunpilotProcess – Bug 10: PID reuse detection
+// ---------------------------------------------------------------------------
+
+describe('isBunpilotProcess', () => {
+  test('returns true for a bun process', () => {
+    // Current process IS a bun process (running tests via bun)
+    const result = isBunpilotProcess(process.pid);
+    expect(result).toBe(true);
+  });
+
+  test('returns false for a non-bun process', () => {
+    // Spawn a non-bun process (sleep)
+    const proc = Bun.spawn({
+      cmd: ['sleep', '60'],
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    const pid = proc.pid;
+
+    try {
+      expect(isBunpilotProcess(pid)).toBe(false);
+    } finally {
+      proc.kill();
+    }
+  });
+
+  test('returns false for a non-existent PID', () => {
+    expect(isBunpilotProcess(99999999)).toBe(false);
   });
 });
 

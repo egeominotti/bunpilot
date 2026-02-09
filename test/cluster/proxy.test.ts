@@ -16,9 +16,10 @@ import { INTERNAL_PORT_BASE } from '../../src/constants';
  * without starting actual TCP listeners.
  */
 function getInternals(proxy: ProxyCluster): {
-  workers: { port: number; alive: boolean }[];
+  workers: Map<number, { port: number; alive: boolean }>;
   rrIndex: number;
   nextAliveWorker: () => { port: number; alive: boolean } | null;
+  handleConnection: (clientSocket: object) => void;
 } {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const p = proxy as any;
@@ -30,6 +31,7 @@ function getInternals(proxy: ProxyCluster): {
       return p.rrIndex;
     },
     nextAliveWorker: () => p.nextAliveWorker.call(proxy),
+    handleConnection: (clientSocket: object) => p.handleConnection.call(proxy, clientSocket),
   };
 }
 
@@ -40,10 +42,10 @@ function getInternals(proxy: ProxyCluster): {
 function initWorkerSlots(proxy: ProxyCluster, count: number): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const p = proxy as any;
-  p.workers = Array.from({ length: count }, (_, i) => ({
-    port: INTERNAL_PORT_BASE + i,
-    alive: false,
-  }));
+  p.workers = new Map<number, { port: number; alive: boolean }>();
+  for (let i = 0; i < count; i++) {
+    p.workers.set(i, { port: INTERNAL_PORT_BASE + i, alive: false });
+  }
   p.rrIndex = 0;
 }
 
@@ -69,7 +71,7 @@ describe('ProxyCluster', () => {
 
     test('starts with no workers', () => {
       const internals = getInternals(proxy);
-      expect(internals.workers).toEqual([]);
+      expect(internals.workers.size).toBe(0);
     });
 
     test('round-robin index starts at 0', () => {
@@ -86,21 +88,21 @@ describe('ProxyCluster', () => {
     test('initWorkerSlots creates correct number of slots', () => {
       initWorkerSlots(proxy, 4);
       const internals = getInternals(proxy);
-      expect(internals.workers.length).toBe(4);
+      expect(internals.workers.size).toBe(4);
     });
 
     test('worker ports are based on INTERNAL_PORT_BASE', () => {
       initWorkerSlots(proxy, 3);
       const internals = getInternals(proxy);
-      expect(internals.workers[0].port).toBe(INTERNAL_PORT_BASE);
-      expect(internals.workers[1].port).toBe(INTERNAL_PORT_BASE + 1);
-      expect(internals.workers[2].port).toBe(INTERNAL_PORT_BASE + 2);
+      expect(internals.workers.get(0)!.port).toBe(INTERNAL_PORT_BASE);
+      expect(internals.workers.get(1)!.port).toBe(INTERNAL_PORT_BASE + 1);
+      expect(internals.workers.get(2)!.port).toBe(INTERNAL_PORT_BASE + 2);
     });
 
     test('all workers start as not alive', () => {
       initWorkerSlots(proxy, 3);
       const internals = getInternals(proxy);
-      for (const w of internals.workers) {
+      for (const [, w] of internals.workers) {
         expect(w.alive).toBe(false);
       }
     });
@@ -115,15 +117,15 @@ describe('ProxyCluster', () => {
       initWorkerSlots(proxy, 3);
       proxy.addWorker(1);
       const internals = getInternals(proxy);
-      expect(internals.workers[1].alive).toBe(true);
+      expect(internals.workers.get(1)!.alive).toBe(true);
     });
 
     test('does not affect other workers', () => {
       initWorkerSlots(proxy, 3);
       proxy.addWorker(1);
       const internals = getInternals(proxy);
-      expect(internals.workers[0].alive).toBe(false);
-      expect(internals.workers[2].alive).toBe(false);
+      expect(internals.workers.get(0)!.alive).toBe(false);
+      expect(internals.workers.get(2)!.alive).toBe(false);
     });
 
     test('is a no-op for out-of-range workerId', () => {
@@ -137,10 +139,10 @@ describe('ProxyCluster', () => {
     test('marks a worker as not alive', () => {
       initWorkerSlots(proxy, 3);
       proxy.addWorker(1);
-      expect(getInternals(proxy).workers[1].alive).toBe(true);
+      expect(getInternals(proxy).workers.get(1)!.alive).toBe(true);
 
       proxy.removeWorker(1);
-      expect(getInternals(proxy).workers[1].alive).toBe(false);
+      expect(getInternals(proxy).workers.get(1)!.alive).toBe(false);
     });
 
     test('is a no-op for out-of-range workerId', () => {
@@ -279,7 +281,7 @@ describe('ProxyCluster', () => {
       proxy.stop();
 
       const internals = getInternals(proxy);
-      expect(internals.workers).toEqual([]);
+      expect(internals.workers.size).toBe(0);
     });
 
     test('resets round-robin index to 0', () => {
@@ -295,6 +297,100 @@ describe('ProxyCluster', () => {
     test('calling stop twice does not throw', () => {
       proxy.stop();
       expect(() => proxy.stop()).not.toThrow();
+    });
+
+    test('stop(true) is called on the listener to close active connections (bug 6)', () => {
+      // Verify the listener.stop() is called with true (closeActiveConnections)
+      let stopCalledWith: boolean | undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const p = proxy as any;
+      p.listener = {
+        stop(closeActive?: boolean) {
+          stopCalledWith = closeActive;
+        },
+      };
+
+      proxy.stop();
+      expect(stopCalledWith).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug 2 & 3: Replacement workers with out-of-range IDs
+  // -----------------------------------------------------------------------
+
+  describe('replacement workers (bugs 2 & 3)', () => {
+    test('addWorker dynamically creates a slot for out-of-range workerId', () => {
+      initWorkerSlots(proxy, 2); // workerIds 0 and 1
+      // Simulate crash recovery: replacement worker gets ID >= N
+      proxy.addWorker(5);
+
+      const internals = getInternals(proxy);
+      // Slot should exist and be alive
+      expect(internals.workers.has(5)).toBe(true);
+      expect(internals.workers.get(5)!.alive).toBe(true);
+      expect(internals.workers.get(5)!.port).toBe(INTERNAL_PORT_BASE + 5);
+    });
+
+    test('replacement worker receives traffic via round-robin', () => {
+      initWorkerSlots(proxy, 2);
+      // Worker 0 crashed, replacement gets ID 3 (via nextWorkerId++)
+      proxy.removeWorker(0);
+      proxy.addWorker(3);
+      proxy.addWorker(1);
+
+      const internals = getInternals(proxy);
+
+      // Should route to worker 1 and worker 3
+      const ports: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        const w = internals.nextAliveWorker();
+        if (w) ports.push(w.port);
+      }
+
+      // Both worker 1 and worker 3 should receive traffic
+      expect(ports).toContain(INTERNAL_PORT_BASE + 1);
+      expect(ports).toContain(INTERNAL_PORT_BASE + 3);
+    });
+
+    test('removeWorker works for dynamically added replacement workers', () => {
+      initWorkerSlots(proxy, 2);
+      proxy.addWorker(5); // replacement worker
+      expect(getInternals(proxy).workers.get(5)!.alive).toBe(true);
+
+      proxy.removeWorker(5);
+      expect(getInternals(proxy).workers.get(5)!.alive).toBe(false);
+    });
+
+    test('getWorkerEnv returns correct port for replacement workers', () => {
+      const env = proxy.getWorkerEnv(5, 3000);
+      expect(env.BUNPILOT_PORT).toBe(String(INTERNAL_PORT_BASE + 5));
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug 1: Bun.connect rejection handling in handleConnection
+  // -----------------------------------------------------------------------
+
+  describe('handleConnection upstream failure (bug 1)', () => {
+    test('client socket is closed when no alive workers exist', () => {
+      initWorkerSlots(proxy, 2);
+      // No workers are alive
+
+      let endCalled = false;
+      const fakeClient = {
+        data: { upstream: null, pending: [] },
+        write: () => 0,
+        end: () => {
+          endCalled = true;
+        },
+      };
+
+      const internals = getInternals(proxy);
+      internals.handleConnection(fakeClient);
+
+      // When no workers are alive, clientSocket.end() should be called directly
+      expect(endCalled).toBe(true);
     });
   });
 });

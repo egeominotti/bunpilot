@@ -19,6 +19,9 @@ type SignalHandler = (signal: NodeJS.Signals) => void;
 
 const registeredHandlers = new Map<NodeJS.Signals, SignalHandler>();
 
+/** Bug 10 fix: Store the unhandledRejection listener for cleanup. */
+let unhandledRejectionHandler: ((reason: unknown) => void) | null = null;
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -56,9 +59,10 @@ export function setupSignalHandlers(callbacks: SignalCallbacks): void {
   process.on('SIGHUP', reloadHandler);
   process.on('SIGPIPE', ignoreHandler);
 
-  process.on('unhandledRejection', (reason) => {
+  unhandledRejectionHandler = (reason: unknown) => {
     console.error('[bunpilot] unhandled rejection:', reason);
-  });
+  };
+  process.on('unhandledRejection', unhandledRejectionHandler);
 
   registeredHandlers.set('SIGTERM', shutdownHandler);
   registeredHandlers.set('SIGINT', shutdownHandler);
@@ -76,4 +80,10 @@ export function removeSignalHandlers(): void {
     process.removeListener(signal, handler);
   }
   registeredHandlers.clear();
+
+  // Bug 10 fix: Remove the unhandledRejection listener.
+  if (unhandledRejectionHandler) {
+    process.removeListener('unhandledRejection', unhandledRejectionHandler);
+    unhandledRejectionHandler = null;
+  }
 }

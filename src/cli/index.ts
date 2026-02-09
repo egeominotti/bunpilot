@@ -146,11 +146,12 @@ function addFlag(flags: Record<string, string | boolean>, name: string, value: s
     // Collect env vars in a separate map stored as JSON
     const existing = flags._env ? JSON.parse(flags._env as string) : {};
     const eqIdx = value.indexOf('=');
-    if (eqIdx > 0) {
-      const k = value.slice(0, eqIdx);
-      const v = value.slice(eqIdx + 1);
-      existing[k] = v;
+    if (eqIdx <= 0) {
+      throw new Error(`Invalid --env format: "${value}". Expected KEY=VALUE.`);
     }
+    const k = value.slice(0, eqIdx);
+    const v = value.slice(eqIdx + 1);
+    existing[k] = v;
     flags._env = JSON.stringify(existing);
     return;
   }

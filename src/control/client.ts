@@ -86,13 +86,24 @@ export class ControlClient {
         socket: {
           open(s) {
             socket = s;
-            s.write(payload);
+            try {
+              s.write(payload);
+            } catch (err) {
+              settle(() => reject(err instanceof Error ? err : new Error(String(err))));
+            }
           },
 
           data(s, raw) {
             buffer += typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
 
-            const messages = decodeMessages(buffer);
+            // Only parse complete NDJSON lines (same pattern as sendStream)
+            const lastNewline = buffer.lastIndexOf('\n');
+            if (lastNewline === -1) return;
+
+            const complete = buffer.slice(0, lastNewline + 1);
+            buffer = buffer.slice(lastNewline + 1);
+
+            const messages = decodeMessages(complete);
             if (messages.length === 0) return;
 
             // We only expect one response per send()
@@ -148,10 +159,13 @@ export class ControlClient {
         fn();
       };
 
+      let streamSocket: { end(): void } | null = null;
+
       Bun.connect({
         unix: this.socketPath,
         socket: {
           open(s) {
+            streamSocket = s;
             s.write(payload);
           },
 
@@ -170,11 +184,21 @@ export class ControlClient {
                 onChunk(msg);
                 if (msg.done) {
                   settle(() => resolve());
+                  try {
+                    streamSocket?.end();
+                  } catch {
+                    /* socket may already be closed */
+                  }
                   return;
                 }
               } else if (isControlResponse(msg) && !msg.ok) {
                 // Server sent an error response instead of a stream
                 settle(() => reject(new Error(msg.error ?? 'Unknown error')));
+                try {
+                  streamSocket?.end();
+                } catch {
+                  /* socket may already be closed */
+                }
                 return;
               }
             }

@@ -42,6 +42,9 @@ export class HealthChecker {
   /** Consecutive HTTP health check failure counts. */
   private failureCounts: Map<number, number> = new Map();
 
+  /** Per-worker guard: true while an async performCheck is in-flight. */
+  private checking: Map<number, boolean> = new Map();
+
   /** Periodic HTTP check timers. */
   private timers: Map<number, Timer> = new Map();
 
@@ -118,6 +121,10 @@ export class HealthChecker {
     const url = `http://127.0.0.1:${port}${hc.path}`;
 
     this.failureCounts.set(workerId, 0);
+    this.checking.set(workerId, false);
+
+    // Run the first check immediately instead of waiting one full interval.
+    this.performCheck(workerId, url, hc.timeout, hc.unhealthyThreshold);
 
     const timer = setInterval(() => {
       this.performCheck(workerId, url, hc.timeout, hc.unhealthyThreshold);
@@ -134,6 +141,7 @@ export class HealthChecker {
       this.timers.delete(workerId);
     }
     this.failureCounts.delete(workerId);
+    this.checking.delete(workerId);
   }
 
   // -----------------------------------------------------------------------
@@ -216,6 +224,10 @@ export class HealthChecker {
     timeout: number,
     threshold: number,
   ): Promise<void> {
+    // Guard: skip if a previous check is still in-flight for this worker.
+    if (this.checking.get(workerId)) return;
+    this.checking.set(workerId, true);
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -233,6 +245,7 @@ export class HealthChecker {
       this.recordFailure(workerId, threshold, message);
     } finally {
       clearTimeout(timeoutId);
+      this.checking.set(workerId, false);
     }
   }
 
@@ -241,7 +254,7 @@ export class HealthChecker {
     const count = (this.failureCounts.get(workerId) ?? 0) + 1;
     this.failureCounts.set(workerId, count);
 
-    if (count >= threshold) {
+    if (count === threshold) {
       this.emitUnhealthy(workerId, `health check failed ${count} times: ${reason}`);
     }
   }

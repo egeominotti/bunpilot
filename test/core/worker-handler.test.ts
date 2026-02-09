@@ -151,6 +151,19 @@ describe('WorkerHandler', () => {
       handler.transitionWorker(worker, 'spawning');
       expect(worker.state).toBe('spawning');
     });
+
+    test('returns true for a valid transition', () => {
+      const worker = makeWorker(1, 'spawning');
+      const result = handler.transitionWorker(worker, 'starting');
+      expect(result).toBe(true);
+    });
+
+    test('returns false for an invalid transition', () => {
+      const worker = makeWorker(1, 'online');
+      const result = handler.transitionWorker(worker, 'spawning');
+      expect(result).toBe(false);
+      expect(worker.state).toBe('online');
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -331,6 +344,85 @@ describe('WorkerHandler', () => {
       handler.handleExit(managed, 1, 0, null, () => {});
 
       expect(managed.stableTimers.has(1)).toBe(false);
+    });
+
+    test('overlapping backoff timers: old timer is cleared before new one (Bug 5)', async () => {
+      const worker = makeWorker(1, 'online');
+      const managed = makeManagedApp([worker], {
+        maxRestarts: 10,
+        backoff: { initial: 200, multiplier: 1, max: 200 },
+      });
+      const restartCalls: number[] = [];
+      const onRestart = (_m: ManagedApp, w: WorkerInfo) => {
+        restartCalls.push(w.id);
+        // After restart, put worker back in crashed for the test
+        w.state = 'crashed';
+      };
+
+      // First crash - sets a backoff timer with 200ms delay
+      handler.handleExit(managed, 1, 1, null, onRestart);
+      expect(worker.state).toBe('crashed');
+
+      // Simulate quick second crash before the first timer fires:
+      // Reset state to online, then crash again
+      worker.state = 'online';
+      handler.handleExit(managed, 1, 1, null, onRestart);
+      expect(worker.state).toBe('crashed');
+
+      // Wait enough time for both timers to have fired
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      // Should only have restarted ONCE (old timer should have been cleared)
+      expect(restartCalls).toHaveLength(1);
+    });
+
+    test('stopAllWorkers clears backoff timers (Bug 5)', async () => {
+      const worker = makeWorker(1, 'online');
+      const managed = makeManagedApp([worker], {
+        maxRestarts: 10,
+        backoff: { initial: 100, multiplier: 1, max: 100 },
+      });
+      const restartCalls: number[] = [];
+      const onRestart = (_m: ManagedApp, w: WorkerInfo) => restartCalls.push(w.id);
+
+      // Crash to set a backoff timer
+      handler.handleExit(managed, 1, 1, null, onRestart);
+      expect(worker.state).toBe('crashed');
+
+      // Now stop all workers (simulating stopApp)
+      await handler.stopAllWorkers(managed);
+
+      // Wait for the backoff timer to have fired (if it wasn't cleared)
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Should NOT have restarted since stopAllWorkers should clear timers
+      expect(restartCalls).toHaveLength(0);
+    });
+
+    test('backoff timer does NOT restart errored workers (Bug 4)', async () => {
+      // Worker crashes, crash recovery says 'restart', sets a backoff timer.
+      // Then before the timer fires, another crash transitions to 'errored'.
+      // The stale backoff timer should NOT call onRestart for errored workers.
+      const worker = makeWorker(1, 'online');
+      const managed = makeManagedApp([worker], {
+        maxRestarts: 3,
+        backoff: { initial: 50, multiplier: 1, max: 50 },
+      });
+      const restartCalls: number[] = [];
+      const onRestart = (_m: ManagedApp, w: WorkerInfo) => restartCalls.push(w.id);
+
+      // First crash - sets a backoff timer
+      handler.handleExit(managed, 1, 1, null, onRestart);
+      expect(worker.state).toBe('crashed');
+
+      // Force worker to errored state (simulating give-up after multiple crashes)
+      worker.state = 'errored';
+
+      // Wait for the backoff timer to fire
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Should NOT have restarted the errored worker
+      expect(restartCalls).toHaveLength(0);
     });
   });
 
@@ -553,13 +645,46 @@ describe('WorkerHandler', () => {
       expect(managed.spawned.has(1)).toBe(false);
     });
 
-    test('does nothing if worker is not online', async () => {
+    test('does nothing if worker is already stopped', async () => {
       const worker = makeWorker(1, 'stopped');
       const managed = makeManagedApp([worker]);
 
       await handler.drainAndStopWorker(managed, worker);
 
       expect(worker.state).toBe('stopped');
+    });
+
+    test('stops a worker in starting state (Bug 8)', async () => {
+      const worker = makeWorker(1, 'starting');
+      const managed = makeManagedApp([worker]);
+      managed.spawned.set(1, {
+        proc: {} as any,
+        pid: 1001,
+        stdout: {} as any,
+        stderr: {} as any,
+      });
+
+      await handler.drainAndStopWorker(managed, worker);
+
+      // Worker should be stopped even though it wasn't online
+      expect(worker.state).toBe('stopped');
+      expect(managed.spawned.has(1)).toBe(false);
+    });
+
+    test('stops a worker in spawning state (Bug 8)', async () => {
+      const worker = makeWorker(1, 'spawning');
+      const managed = makeManagedApp([worker]);
+      managed.spawned.set(1, {
+        proc: {} as any,
+        pid: 1001,
+        stdout: {} as any,
+        stderr: {} as any,
+      });
+
+      await handler.drainAndStopWorker(managed, worker);
+
+      expect(worker.state).toBe('stopped');
+      expect(managed.spawned.has(1)).toBe(false);
     });
 
     test('handles worker with no spawned entry', async () => {

@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import { LOGS_DIR } from '../constants';
 import type { LogsConfig } from '../config/types';
 import { LogWriter } from './writer';
@@ -38,8 +38,24 @@ export class LogManager {
       mkdirSync(appDir, { recursive: true });
     }
 
-    const outFile = config.outFile ?? `${appName}-${workerId}-out.log`;
-    const errFile = config.errFile ?? `${appName}-${workerId}-err.log`;
+    // Bug 5: Close existing writers for the same key before creating new ones
+    const stdoutKey = `${appName}:${workerId}:stdout`;
+    const stderrKey = `${appName}:${workerId}:stderr`;
+
+    const existingOut = this.writers.get(stdoutKey);
+    if (existingOut) existingOut.close();
+
+    const existingErr = this.writers.get(stderrKey);
+    if (existingErr) existingErr.close();
+
+    // Bug 7: When custom filenames are used with workerId > 0,
+    // append workerId to avoid collisions
+    const outFile = config.outFile
+      ? this.addWorkerSuffix(config.outFile, workerId)
+      : `${appName}-${workerId}-out.log`;
+    const errFile = config.errFile
+      ? this.addWorkerSuffix(config.errFile, workerId)
+      : `${appName}-${workerId}-err.log`;
 
     const stdoutPath = join(appDir, outFile);
     const stderrPath = join(appDir, errFile);
@@ -48,8 +64,8 @@ export class LogManager {
     const stderrWriter = new LogWriter(stderrPath, config.maxSize, config.maxFiles);
 
     // Track writers for cleanup
-    this.writers.set(`${appName}:${workerId}:stdout`, stdoutWriter);
-    this.writers.set(`${appName}:${workerId}:stderr`, stderrWriter);
+    this.writers.set(stdoutKey, stdoutWriter);
+    this.writers.set(stderrKey, stderrWriter);
 
     return { stdout: stdoutWriter, stderr: stderrWriter };
   }
@@ -118,8 +134,29 @@ export class LogManager {
           }
         }
       }
-    } catch {
-      // Stream closed or errored – nothing to do
+    } catch (err: unknown) {
+      // Differentiate between expected stream-close errors and real failures
+      const msg = err instanceof Error ? err.message : String(err);
+      const isStreamClose =
+        msg.includes('ReadableStream') ||
+        msg.includes('stream') ||
+        msg.includes('cancel') ||
+        msg.includes('reader');
+
+      if (!isStreamClose) {
+        process.stderr.write(`${prefix} log pipe error: ${msg}\n`);
+      }
     }
+  }
+
+  /**
+   * For custom filenames with workerId > 0, insert the workerId before
+   * the extension to avoid collisions: "app.log" -> "app-1.log"
+   */
+  private addWorkerSuffix(filename: string, workerId: number): string {
+    if (workerId === 0) return filename;
+    const ext = extname(filename);
+    const base = basename(filename, ext);
+    return `${base}-${workerId}${ext}`;
   }
 }

@@ -72,9 +72,13 @@ export function validateBoundedNumber(
   ctx: string,
   min: number,
   max: number,
+  integer?: boolean,
 ): number | undefined {
   if (value === undefined || value === null) return undefined;
   assertNumber(value, field, ctx);
+  if (integer && !Number.isInteger(value)) {
+    throw new Error(`[${ctx}] "${field}" must be an integer. Got ${value}.`);
+  }
   if (value < min || value > max) {
     throw new Error(`[${ctx}] "${field}" must be between ${min} and ${max}. Got ${value}.`);
   }
@@ -144,7 +148,7 @@ export function validateHealthCheck(raw: unknown, ctx: string): HealthCheckConfi
     throw new Error(`[${ctx}] "healthCheck" must be an object.`);
   }
 
-  return {
+  const config: HealthCheckConfig = {
     enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_HEALTH_CHECK.enabled,
     path: (() => {
       const p =
@@ -155,10 +159,10 @@ export function validateHealthCheck(raw: unknown, ctx: string): HealthCheckConfi
       return p;
     })(),
     interval:
-      validateBoundedNumber(raw.interval, 'healthCheck.interval', ctx, 1_000, 600_000) ??
+      validateBoundedNumber(raw.interval, 'healthCheck.interval', ctx, 1_000, 600_000, true) ??
       DEFAULT_HEALTH_CHECK.interval,
     timeout:
-      validateBoundedNumber(raw.timeout, 'healthCheck.timeout', ctx, 500, 60_000) ??
+      validateBoundedNumber(raw.timeout, 'healthCheck.timeout', ctx, 500, 60_000, true) ??
       DEFAULT_HEALTH_CHECK.timeout,
     unhealthyThreshold:
       validateBoundedNumber(
@@ -167,8 +171,17 @@ export function validateHealthCheck(raw: unknown, ctx: string): HealthCheckConfi
         ctx,
         1,
         100,
+        true,
       ) ?? DEFAULT_HEALTH_CHECK.unhealthyThreshold,
   };
+
+  if (config.timeout >= config.interval) {
+    throw new Error(
+      `[${ctx}] "healthCheck.timeout" (${config.timeout}) must be less than "healthCheck.interval" (${config.interval}).`,
+    );
+  }
+
+  return config;
 }
 
 export function validateBackoff(raw: unknown, ctx: string): BackoffConfig {
@@ -177,7 +190,7 @@ export function validateBackoff(raw: unknown, ctx: string): BackoffConfig {
     throw new Error(`[${ctx}] "backoff" must be an object.`);
   }
 
-  return {
+  const config: BackoffConfig = {
     initial:
       validateBoundedNumber(raw.initial, 'backoff.initial', ctx, 100, 300_000) ??
       DEFAULT_BACKOFF.initial,
@@ -186,6 +199,14 @@ export function validateBackoff(raw: unknown, ctx: string): BackoffConfig {
       DEFAULT_BACKOFF.multiplier,
     max: validateBoundedNumber(raw.max, 'backoff.max', ctx, 1_000, 600_000) ?? DEFAULT_BACKOFF.max,
   };
+
+  if (config.initial > config.max) {
+    throw new Error(
+      `[${ctx}] "backoff.initial" (${config.initial}) must not exceed "backoff.max" (${config.max}).`,
+    );
+  }
+
+  return config;
 }
 
 export function validateLogs(raw: unknown, ctx: string): LogsConfig {
@@ -196,10 +217,11 @@ export function validateLogs(raw: unknown, ctx: string): LogsConfig {
 
   const result: LogsConfig = {
     maxSize:
-      validateBoundedNumber(raw.maxSize, 'logs.maxSize', ctx, 1024, 1_073_741_824) ??
+      validateBoundedNumber(raw.maxSize, 'logs.maxSize', ctx, 1024, 1_073_741_824, true) ??
       DEFAULT_LOGS.maxSize,
     maxFiles:
-      validateBoundedNumber(raw.maxFiles, 'logs.maxFiles', ctx, 1, 100) ?? DEFAULT_LOGS.maxFiles,
+      validateBoundedNumber(raw.maxFiles, 'logs.maxFiles', ctx, 1, 100, true) ??
+      DEFAULT_LOGS.maxFiles,
   };
 
   if (typeof raw.outFile === 'string' && raw.outFile.length > 0) {
@@ -237,12 +259,26 @@ export function validateMetrics(raw: unknown, ctx: string): MetricsConfig {
 }
 
 export function validateClustering(raw: unknown, ctx: string): ClusteringConfig {
-  if (raw === undefined || raw === null) return { ...DEFAULT_CLUSTERING };
+  if (raw === undefined || raw === null) {
+    return { ...DEFAULT_CLUSTERING, rollingRestart: { ...DEFAULT_CLUSTERING.rollingRestart } };
+  }
   if (!isRecord(raw)) {
     throw new Error(`[${ctx}] "clustering" must be an object.`);
   }
 
   const validStrategies: ClusterStrategy[] = ['reusePort', 'proxy', 'auto'];
+
+  if (raw.strategy !== undefined && raw.strategy !== null) {
+    if (
+      typeof raw.strategy !== 'string' ||
+      !validStrategies.includes(raw.strategy as ClusterStrategy)
+    ) {
+      throw new Error(
+        `[${ctx}] "clustering.strategy" must be one of "reusePort", "proxy", "auto". Got "${String(raw.strategy)}".`,
+      );
+    }
+  }
+
   const strategy =
     typeof raw.strategy === 'string' && validStrategies.includes(raw.strategy as ClusterStrategy)
       ? (raw.strategy as ClusterStrategy)
@@ -258,6 +294,7 @@ export function validateClustering(raw: unknown, ctx: string): ClusteringConfig 
           ctx,
           1,
           100,
+          true,
         ) ?? DEFAULT_CLUSTERING.rollingRestart.batchSize,
       batchDelay:
         validateBoundedNumber(
@@ -266,6 +303,7 @@ export function validateClustering(raw: unknown, ctx: string): ClusteringConfig 
           ctx,
           0,
           300_000,
+          true,
         ) ?? DEFAULT_CLUSTERING.rollingRestart.batchDelay,
     };
   }

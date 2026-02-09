@@ -41,7 +41,9 @@ export async function listCommand(
     if (app.workers.length === 0) {
       rows.push([
         app.name,
-        formatState(app.status === 'running' ? 'online' : 'stopped'),
+        formatState(
+          app.status === 'running' ? 'online' : app.status === 'errored' ? 'errored' : 'stopped',
+        ),
         '\u2014',
         '\u2014',
         '\u2014',

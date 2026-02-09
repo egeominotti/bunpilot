@@ -533,4 +533,155 @@ describe('ControlClient', () => {
       expect((received[0].data as any).line).toBe('ok');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Bug 5: send() buffer handling – only parse complete NDJSON lines
+  // -------------------------------------------------------------------------
+
+  describe('send() – partial NDJSON buffer handling (bug 5)', () => {
+    test('handles response split across multiple TCP chunks', async () => {
+      const dir = freshTempDir();
+      const socketPath = join(dir, 'partial-ndjson.sock');
+
+      // Create a server that sends a response in two partial writes
+      const listener = Bun.listen({
+        unix: socketPath,
+        socket: {
+          open() {
+            /* wait for data */
+          },
+
+          data(socket, raw) {
+            const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
+            const messages = decodeMessages(text);
+            if (messages.length > 0) {
+              const req = messages[0] as any;
+              const response = JSON.stringify({ id: req.id, ok: true, data: { status: 'ok' } });
+              // Send the JSON in two halves without a trailing newline first
+              const half = Math.floor(response.length / 2);
+              socket.write(response.slice(0, half));
+              // After a short delay, send the rest with newline
+              setTimeout(() => {
+                socket.write(response.slice(half) + '\n');
+              }, 20);
+            }
+          },
+
+          close() {
+            /* ignore */
+          },
+          error() {
+            /* ignore */
+          },
+        },
+      });
+      rawListeners.push(listener);
+
+      const client = new ControlClient(socketPath);
+      const res = await client.send('status');
+
+      expect(res.ok).toBe(true);
+      expect((res.data as any).status).toBe('ok');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Bug 7: send() open callback write error handling
+  // -------------------------------------------------------------------------
+
+  describe('send() – open callback error handling (bug 7)', () => {
+    test('rejects when server immediately closes connection', async () => {
+      const dir = freshTempDir();
+      const socketPath = join(dir, 'write-err.sock');
+
+      // Create a server that immediately closes the connection on open.
+      // This exercises the error/close paths and verifies the promise settles
+      // correctly even when write in open() might fail.
+      const listener = Bun.listen({
+        unix: socketPath,
+        socket: {
+          open(socket) {
+            // Immediately close to trigger client's close handler
+            socket.end();
+          },
+
+          data() {
+            /* ignore */
+          },
+
+          close() {
+            /* ignore */
+          },
+          error() {
+            /* ignore */
+          },
+        },
+      });
+      rawListeners.push(listener);
+
+      const client = new ControlClient(socketPath);
+
+      // Server closes immediately, so client should get
+      // "Connection closed before receiving a response"
+      await expect(client.send('ping')).rejects.toThrow(
+        'Connection closed before receiving a response',
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Bug 4: sendStream() should close socket on done: true
+  // -------------------------------------------------------------------------
+
+  describe('sendStream() – socket cleanup on done (bug 4)', () => {
+    test('socket is closed after receiving done: true', async () => {
+      const dir = freshTempDir();
+      const socketPath = join(dir, 'stream-close-done.sock');
+
+      let serverSawClose = false;
+
+      const listener = Bun.listen({
+        unix: socketPath,
+        socket: {
+          open() {
+            /* wait for data */
+          },
+
+          data(socket, raw) {
+            const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
+            const messages = decodeMessages(text);
+            if (messages.length > 0) {
+              socket.write(
+                encodeMessage(createStreamChunk('req-1', { line: 'data' })) +
+                  encodeMessage(createStreamChunk('req-1', null, true)),
+              );
+            }
+          },
+
+          close() {
+            serverSawClose = true;
+          },
+          error() {
+            /* ignore */
+          },
+        },
+      });
+      rawListeners.push(listener);
+
+      const client = new ControlClient(socketPath);
+      const received: ControlStreamChunk[] = [];
+
+      await client.sendStream('logs', undefined, (chunk) => {
+        received.push(chunk);
+      });
+
+      // Give a small delay for the close event to propagate
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(received.length).toBe(2);
+      expect(received[1].done).toBe(true);
+      // The server should see the client close the socket
+      expect(serverSawClose).toBe(true);
+    });
+  });
 });

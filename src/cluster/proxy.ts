@@ -48,8 +48,8 @@ interface WritableEnd {
  * using simple round-robin.
  */
 export class ProxyCluster {
-  /** Indexed by `workerId`. */
-  private workers: WorkerSlot[] = [];
+  /** Worker slots keyed by workerId. Supports non-contiguous IDs for replacement workers. */
+  private workers: Map<number, WorkerSlot> = new Map();
 
   /** Round-robin cursor – always points at the *next* index to try. */
   private rrIndex = 0;
@@ -66,10 +66,10 @@ export class ProxyCluster {
    * internal ports starting at `INTERNAL_PORT_BASE`.
    */
   start(publicPort: number, workerCount: number): void {
-    this.workers = Array.from({ length: workerCount }, (_, i) => ({
-      port: INTERNAL_PORT_BASE + i,
-      alive: false,
-    }));
+    this.workers = new Map();
+    for (let i = 0; i < workerCount; i++) {
+      this.workers.set(i, { port: INTERNAL_PORT_BASE + i, alive: false });
+    }
 
     this.rrIndex = 0;
 
@@ -117,25 +117,33 @@ export class ProxyCluster {
 
   /** Mark worker as alive so the proxy starts sending it traffic. */
   addWorker(workerId: number): void {
-    if (this.workers[workerId]) {
-      this.workers[workerId].alive = true;
+    const slot = this.workers.get(workerId);
+    if (slot) {
+      slot.alive = true;
+    } else {
+      // Replacement worker with a new ID – create a slot dynamically.
+      this.workers.set(workerId, {
+        port: INTERNAL_PORT_BASE + workerId,
+        alive: true,
+      });
     }
   }
 
   /** Mark worker as dead so the proxy stops sending it traffic. */
   removeWorker(workerId: number): void {
-    if (this.workers[workerId]) {
-      this.workers[workerId].alive = false;
+    const slot = this.workers.get(workerId);
+    if (slot) {
+      slot.alive = false;
     }
   }
 
   /** Stop the public listener and release all resources. */
   stop(): void {
     if (this.listener) {
-      this.listener.stop();
+      this.listener.stop(true);
       this.listener = null;
     }
-    this.workers = [];
+    this.workers = new Map();
     this.rrIndex = 0;
   }
 
@@ -148,12 +156,13 @@ export class ProxyCluster {
    * Returns `null` when no workers are alive.
    */
   private nextAliveWorker(): WorkerSlot | null {
-    const total = this.workers.length;
+    const entries = Array.from(this.workers.entries()).sort((a, b) => a[0] - b[0]);
+    const total = entries.length;
     if (total === 0) return null;
 
     for (let i = 0; i < total; i++) {
       const idx = (this.rrIndex + i) % total;
-      const worker = this.workers[idx];
+      const worker = entries[idx][1];
       if (worker.alive) {
         this.rrIndex = (idx + 1) % total;
         return worker;
@@ -197,6 +206,13 @@ export class ProxyCluster {
           clientSocket.end();
         },
       },
+    }).catch(() => {
+      // Upstream connection failed – close the client socket to prevent leak.
+      try {
+        clientSocket.end();
+      } catch {
+        /* client may already be closed */
+      }
     });
   }
 }

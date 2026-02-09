@@ -14,6 +14,7 @@ export class LogWriter {
   private readonly maxFiles: number;
   private currentSize: number = 0;
   private closed: boolean = false;
+  private rotating: boolean = false;
 
   constructor(filePath: string, maxSize: number, maxFiles: number) {
     this.filePath = filePath;
@@ -33,13 +34,18 @@ export class LogWriter {
   async write(data: Uint8Array | string): Promise<void> {
     if (this.closed) return;
 
-    if (await this.checkSize()) {
+    if (this.checkSize()) {
       await this.rotate();
     }
 
     const encoded = typeof data === 'string' ? new TextEncoder().encode(data) : data;
     appendFileSync(this.filePath, encoded);
     this.currentSize += encoded.byteLength;
+
+    // Check again after write — a single large chunk may have pushed past maxSize
+    if (this.checkSize()) {
+      await this.rotate();
+    }
   }
 
   /**
@@ -47,28 +53,35 @@ export class LogWriter {
    * Deletes the oldest file when `maxFiles` is exceeded.
    */
   async rotate(): Promise<void> {
-    // Delete the oldest rotated file if it exists
-    const oldestPath = `${this.filePath}.${this.maxFiles}`;
-    if (existsSync(oldestPath)) {
-      unlinkSync(oldestPath);
-    }
+    // Guard against concurrent rotation
+    if (this.rotating) return;
+    this.rotating = true;
 
-    // Shift rotated files: .N-1 -> .N, .N-2 -> .N-1, ...
-    for (let i = this.maxFiles - 1; i >= 1; i--) {
-      const src = `${this.filePath}.${i}`;
-      const dst = `${this.filePath}.${i + 1}`;
-      if (existsSync(src)) {
-        renameSync(src, dst);
+    try {
+      // Delete the oldest rotated file if it exists
+      const oldestPath = `${this.filePath}.${this.maxFiles}`;
+      if (existsSync(oldestPath)) {
+        unlinkSync(oldestPath);
       }
-    }
 
-    // Rotate current file to .1
-    const currentFile = Bun.file(this.filePath);
-    if (await currentFile.exists()) {
-      renameSync(this.filePath, `${this.filePath}.1`);
-    }
+      // Shift rotated files: .N-1 -> .N, .N-2 -> .N-1, ...
+      for (let i = this.maxFiles - 1; i >= 1; i--) {
+        const src = `${this.filePath}.${i}`;
+        const dst = `${this.filePath}.${i + 1}`;
+        if (existsSync(src)) {
+          renameSync(src, dst);
+        }
+      }
 
-    this.currentSize = 0;
+      // Rotate current file to .1
+      if (existsSync(this.filePath)) {
+        renameSync(this.filePath, `${this.filePath}.1`);
+      }
+
+      this.currentSize = 0;
+    } finally {
+      this.rotating = false;
+    }
   }
 
   /** Flush and cleanup. */
@@ -90,7 +103,7 @@ export class LogWriter {
   }
 
   /** Returns true when the current file needs rotation. */
-  private async checkSize(): Promise<boolean> {
+  private checkSize(): boolean {
     return this.currentSize >= this.maxSize;
   }
 }

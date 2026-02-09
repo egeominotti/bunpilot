@@ -205,4 +205,78 @@ describe('bunpilotStartMetrics', () => {
 
     expect(metricsMessages.length).toBeGreaterThanOrEqual(1);
   });
+
+  // -------------------------------------------------------------------------
+  // Bug regression: periodic metrics sends absolute CPU values (Bug #4)
+  // -------------------------------------------------------------------------
+
+  test('periodic metrics sends absolute (monotonically increasing) CPU values', async () => {
+    const { bunpilotStartMetrics } = await import('../../src/sdk/worker');
+
+    sentMessages.length = 0;
+
+    bunpilotStartMetrics(80);
+
+    // Wait for multiple metrics messages
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    const metricsMessages = sentMessages.filter(
+      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics'
+    ) as Array<{
+      type: string;
+      payload: { cpu: { user: number; system: number } };
+    }>;
+
+    expect(metricsMessages.length).toBeGreaterThanOrEqual(2);
+
+    // CPU values should be absolute and monotonically non-decreasing.
+    // With delta-based reporting (the bug), each value would be a small
+    // increment (~0-few thousand us), NOT monotonically increasing.
+    // With absolute reporting (the fix), values grow over time.
+    for (let i = 1; i < metricsMessages.length; i++) {
+      const prev = metricsMessages[i - 1].payload.cpu;
+      const curr = metricsMessages[i].payload.cpu;
+      // Absolute CPU microseconds should be non-decreasing
+      expect(curr.user).toBeGreaterThanOrEqual(prev.user);
+      expect(curr.system).toBeGreaterThanOrEqual(prev.system);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Bug regression: on-demand and periodic send consistent values (Bug #5)
+  // -------------------------------------------------------------------------
+
+  test('on-demand collect-metrics and periodic metrics send consistent absolute CPU', async () => {
+    const { bunpilotStartMetrics } = await import('../../src/sdk/worker');
+
+    sentMessages.length = 0;
+
+    bunpilotStartMetrics(100);
+
+    // Wait for a periodic message
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Trigger on-demand
+    process.emit('message', { type: 'collect-metrics' });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const metricsMessages = sentMessages.filter(
+      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics'
+    ) as Array<{
+      type: string;
+      payload: { cpu: { user: number; system: number } };
+    }>;
+
+    expect(metricsMessages.length).toBeGreaterThanOrEqual(2);
+
+    // ALL messages (periodic AND on-demand) should have absolute CPU values
+    // that are monotonically non-decreasing.
+    for (let i = 1; i < metricsMessages.length; i++) {
+      const prev = metricsMessages[i - 1].payload.cpu;
+      const curr = metricsMessages[i].payload.cpu;
+      expect(curr.user).toBeGreaterThanOrEqual(prev.user);
+      expect(curr.system).toBeGreaterThanOrEqual(prev.system);
+    }
+  });
 });

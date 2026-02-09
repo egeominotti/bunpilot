@@ -586,14 +586,16 @@ describe('validateClustering', () => {
     expect(validateClustering({ strategy: 'auto' }, 'ctx').strategy).toBe('auto');
   });
 
-  test('falls back to default strategy for invalid string', () => {
-    const result = validateClustering({ strategy: 'invalid' }, 'ctx');
-    expect(result.strategy).toBe('auto');
+  test('throws for invalid strategy string', () => {
+    expect(() => validateClustering({ strategy: 'invalid' }, 'ctx')).toThrow(
+      '"clustering.strategy" must be one of',
+    );
   });
 
-  test('falls back to default strategy for non-string', () => {
-    const result = validateClustering({ strategy: 42 }, 'ctx');
-    expect(result.strategy).toBe('auto');
+  test('throws for non-string strategy value', () => {
+    expect(() => validateClustering({ strategy: 42 }, 'ctx')).toThrow(
+      '"clustering.strategy" must be one of',
+    );
   });
 
   test('uses default enabled when not a boolean', () => {
@@ -644,5 +646,110 @@ describe('validateClustering', () => {
   test('accepts batchDelay of 0', () => {
     const result = validateClustering({ rollingRestart: { batchDelay: 0 } }, 'ctx');
     expect(result.rollingRestart.batchDelay).toBe(0);
+  });
+
+  // Bug 1: Shallow spread of DEFAULT_CLUSTERING leaks shared nested reference
+  test('does not mutate DEFAULT_CLUSTERING when returning defaults', () => {
+    // First call returns defaults (no rollingRestart provided)
+    const result1 = validateClustering(undefined, 'ctx');
+    // Second call returns defaults too
+    const result2 = validateClustering(undefined, 'ctx');
+
+    // Mutate the rollingRestart on the first result
+    result1.rollingRestart.batchSize = 99;
+    result1.rollingRestart.batchDelay = 99_999;
+
+    // The second result should NOT be affected
+    expect(result2.rollingRestart.batchSize).toBe(1);
+    expect(result2.rollingRestart.batchDelay).toBe(1_000);
+
+    // Also verify a fresh call still returns correct defaults
+    const result3 = validateClustering(undefined, 'ctx');
+    expect(result3.rollingRestart.batchSize).toBe(1);
+    expect(result3.rollingRestart.batchDelay).toBe(1_000);
+  });
+
+  // Bug 5: validateClustering silently accepts invalid strategy strings
+  test('throws for invalid strategy strings', () => {
+    expect(() => validateClustering({ strategy: 'invalid' }, 'ctx')).toThrow(
+      '"clustering.strategy" must be one of',
+    );
+  });
+
+  test('throws for non-string strategy values', () => {
+    expect(() => validateClustering({ strategy: 42 }, 'ctx')).toThrow(
+      '"clustering.strategy" must be one of',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateBoundedNumber – integer mode (Bug 9)
+// ---------------------------------------------------------------------------
+
+describe('validateBoundedNumber integer mode', () => {
+  test('accepts integers when integer flag is true', () => {
+    expect(validateBoundedNumber(5, 'field', 'ctx', 0, 100, true)).toBe(5);
+    expect(validateBoundedNumber(0, 'field', 'ctx', 0, 100, true)).toBe(0);
+    expect(validateBoundedNumber(100, 'field', 'ctx', 0, 100, true)).toBe(100);
+  });
+
+  test('rejects floats when integer flag is true', () => {
+    expect(() => validateBoundedNumber(3.7, 'field', 'ctx', 0, 100, true)).toThrow(
+      '"field" must be an integer',
+    );
+    expect(() => validateBoundedNumber(2.5, 'field', 'ctx', 0, 100, true)).toThrow(
+      '"field" must be an integer',
+    );
+  });
+
+  test('still allows floats when integer flag is false or undefined', () => {
+    expect(validateBoundedNumber(3.7, 'field', 'ctx', 0, 100)).toBe(3.7);
+    expect(validateBoundedNumber(3.7, 'field', 'ctx', 0, 100, false)).toBe(3.7);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateHealthCheck cross-field: timeout >= interval (Bug 10)
+// ---------------------------------------------------------------------------
+
+describe('validateHealthCheck cross-field validation', () => {
+  test('throws when timeout >= interval', () => {
+    expect(() =>
+      validateHealthCheck({ timeout: 30_000, interval: 30_000 }, 'ctx'),
+    ).toThrow('timeout');
+    expect(() =>
+      validateHealthCheck({ timeout: 40_000, interval: 30_000 }, 'ctx'),
+    ).toThrow('timeout');
+  });
+
+  test('accepts when timeout < interval', () => {
+    const result = validateHealthCheck({ timeout: 5_000, interval: 30_000 }, 'ctx');
+    expect(result.timeout).toBe(5_000);
+    expect(result.interval).toBe(30_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateBackoff cross-field: initial > max (Bug 11)
+// ---------------------------------------------------------------------------
+
+describe('validateBackoff cross-field validation', () => {
+  test('throws when initial > max', () => {
+    expect(() =>
+      validateBackoff({ initial: 60_000, max: 30_000 }, 'ctx'),
+    ).toThrow('initial');
+  });
+
+  test('accepts when initial <= max', () => {
+    const result = validateBackoff({ initial: 1_000, max: 30_000 }, 'ctx');
+    expect(result.initial).toBe(1_000);
+    expect(result.max).toBe(30_000);
+  });
+
+  test('accepts when initial equals max', () => {
+    const result = validateBackoff({ initial: 30_000, max: 30_000 }, 'ctx');
+    expect(result.initial).toBe(30_000);
+    expect(result.max).toBe(30_000);
   });
 });

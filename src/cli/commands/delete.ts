@@ -76,5 +76,10 @@ function readLine(): Promise<string> {
         resolve(data.trim());
       }
     });
+
+    process.stdin.on('end', () => {
+      process.stdin.pause();
+      resolve(data.trim());
+    });
   });
 }

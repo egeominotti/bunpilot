@@ -113,4 +113,63 @@ describe('MetricsAggregator', () => {
     expect(data!.activeHandles).toBeUndefined();
     expect(data!.custom).toBeUndefined();
   });
+
+  // -------------------------------------------------------------------------
+  // Bug regression: aggregator expects absolute CPU values (Bug #4/#5)
+  // -------------------------------------------------------------------------
+
+  test('CPU percentage is correct with absolute (non-delta) CPU values', () => {
+    const originalNow = Date.now;
+    const baseTime = originalNow();
+
+    try {
+      // Simulate what the worker should send: absolute cumulative CPU us.
+      // Sample 1: absolute = {user: 100_000, system: 50_000}
+      Date.now = () => baseTime;
+      agg.updateMetrics(1, makePayload({ cpu: { user: 100_000, system: 50_000 } }));
+      expect(agg.getMetrics(1)!.cpuPercent).toBe(0); // first sample
+
+      // Sample 2: 1s later, absolute = {user: 200_000, system: 100_000}
+      // delta = 100_000 + 50_000 = 150_000 us = 150ms over 1000ms => 15%
+      Date.now = () => baseTime + 1_000;
+      agg.updateMetrics(1, makePayload({ cpu: { user: 200_000, system: 100_000 } }));
+      expect(agg.getMetrics(1)!.cpuPercent).toBe(15.0);
+
+      // Sample 3: 1s later, absolute = {user: 250_000, system: 120_000}
+      // delta = 50_000 + 20_000 = 70_000 us = 70ms over 1000ms => 7%
+      Date.now = () => baseTime + 2_000;
+      agg.updateMetrics(1, makePayload({ cpu: { user: 250_000, system: 120_000 } }));
+      expect(agg.getMetrics(1)!.cpuPercent).toBe(7.0);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test('delta CPU values produce wrong (near-zero) CPU percentages via delta-of-delta', () => {
+    const originalNow = Date.now;
+    const baseTime = originalNow();
+
+    try {
+      // Simulate buggy behavior: worker sends deltas instead of absolutes.
+      // Each "delta" is a small number like 5_000 us.
+      // The aggregator computes its own delta: 5_000 - 5_000 = 0 => 0%.
+      // This is the bug: delta-of-delta.
+
+      Date.now = () => baseTime;
+      agg.updateMetrics(1, makePayload({ cpu: { user: 5_000, system: 2_000 } }));
+      expect(agg.getMetrics(1)!.cpuPercent).toBe(0); // first sample, always 0
+
+      // If values were deltas they'd be similar small numbers each time.
+      // The aggregator's delta computation would yield ~0 since
+      // 5_000 - 5_000 = 0 for user, 2_000 - 2_000 = 0 for system.
+      Date.now = () => baseTime + 1_000;
+      agg.updateMetrics(1, makePayload({ cpu: { user: 5_000, system: 2_000 } }));
+
+      // delta-of-delta: (5000-5000 + 2000-2000) / 1000 / 1000 * 100 = 0%
+      // This is wrong if the process actually used 7ms of CPU in that interval.
+      expect(agg.getMetrics(1)!.cpuPercent).toBe(0);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
 });

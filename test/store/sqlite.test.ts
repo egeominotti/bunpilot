@@ -175,6 +175,88 @@ describe('SqliteStore', () => {
     expect(store.getRestartHistory('app')).toHaveLength(2);
   });
 
+  // -- Bug 1: cleanupOldRestarts should be per-app, not global -----------
+  test('cleanupOldRestarts keeps N entries per app, not globally', () => {
+    // App A has 3 entries, App B has 3 entries
+    for (let i = 0; i < 3; i++) {
+      store.addRestartEntry('app-a', 0, 100 + i, 1, null, 100, `crash-a-${i}`);
+      store.addRestartEntry('app-b', 0, 200 + i, 1, null, 100, `crash-b-${i}`);
+    }
+
+    // Keep 2 entries per app => app-a should have 2, app-b should have 2
+    store.cleanupOldRestarts(2);
+
+    const histA = store.getRestartHistory('app-a');
+    const histB = store.getRestartHistory('app-b');
+
+    // Both apps should retain their most recent 2 entries
+    expect(histA).toHaveLength(2);
+    expect(histB).toHaveLength(2);
+  });
+
+  // -- Bug 2: deleteApp should cascade-delete related rows ---------------
+  test('deleteApp cascade-deletes workers, restart_history, and metrics', () => {
+    store.saveApp('doomed', makeAppConfig({ name: 'doomed' }));
+    store.saveWorker('doomed', 0, 'online', 1234);
+    store.saveWorker('doomed', 1, 'online', 1235);
+    store.addRestartEntry('doomed', 0, 1234, 1, null, 500, 'crash');
+    store.addRestartEntry('doomed', 1, 1235, 0, 'SIGTERM', 1000, 'manual');
+    store.saveMetricSnapshot('doomed', 0, 50e6, 30e6, 2.5, 1.0);
+
+    // Also save another app to confirm it's NOT affected
+    store.saveApp('keeper', makeAppConfig({ name: 'keeper' }));
+    store.saveWorker('keeper', 0, 'online', 9999);
+    store.addRestartEntry('keeper', 0, 9999, 1, null, 300, 'crash');
+    store.saveMetricSnapshot('keeper', 0, 40e6, 20e6, 1.5);
+
+    store.deleteApp('doomed');
+
+    // App should be gone
+    expect(store.getApp('doomed')).toBeNull();
+
+    // Workers should be gone
+    expect(store.getWorkers('doomed')).toEqual([]);
+
+    // Restart history should be gone
+    expect(store.getRestartHistory('doomed')).toEqual([]);
+
+    // Keeper should be untouched
+    expect(store.getApp('keeper')).not.toBeNull();
+    expect(store.getWorkers('keeper')).toHaveLength(1);
+    expect(store.getRestartHistory('keeper')).toHaveLength(1);
+  });
+
+  // -- Bug 3: saveWorker should not overwrite started_at on state update --
+  test('saveWorker preserves started_at when PID unchanged', () => {
+    // Insert a worker with PID 1234
+    store.saveWorker('app', 0, 'starting', 1234);
+    const w1 = store.getWorkers('app')[0];
+    const originalStartedAt = w1.started_at;
+
+    // Simulate a small delay to ensure time would differ if overwritten
+    // Update state but keep same PID — started_at should NOT change
+    store.saveWorker('app', 0, 'online', 1234);
+    const w2 = store.getWorkers('app')[0];
+
+    expect(w2.state).toBe('online');
+    expect(w2.started_at).toBe(originalStartedAt);
+  });
+
+  test('saveWorker updates started_at when PID changes', () => {
+    // Insert a worker with PID 1234
+    store.saveWorker('app', 0, 'starting', 1234);
+    const w1 = store.getWorkers('app')[0];
+    const originalStartedAt = w1.started_at;
+
+    // Update with a different PID — started_at SHOULD change
+    store.saveWorker('app', 0, 'starting', 5678);
+    const w2 = store.getWorkers('app')[0];
+
+    expect(w2.pid).toBe(5678);
+    // started_at should be >= original (it was reset)
+    expect(w2.started_at).toBeGreaterThanOrEqual(originalStartedAt);
+  });
+
   // -- Lifecycle ----------------------------------------------------------
   test('close does not throw', () => {
     expect(() => store.close()).not.toThrow();

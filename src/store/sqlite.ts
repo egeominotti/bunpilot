@@ -158,8 +158,13 @@ export class SqliteStore {
   }
 
   deleteApp(name: string): void {
-    const stmt = this.db.prepare('DELETE FROM apps WHERE name = ?1');
-    stmt.run(name);
+    const tx = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM workers WHERE app_name = ?1').run(name);
+      this.db.prepare('DELETE FROM restart_history WHERE app_name = ?1').run(name);
+      this.db.prepare('DELETE FROM metrics WHERE app_name = ?1').run(name);
+      this.db.prepare('DELETE FROM apps WHERE name = ?1').run(name);
+    });
+    tx();
   }
 
   // -------------------------------------------------------------------------
@@ -173,7 +178,10 @@ export class SqliteStore {
       ON CONFLICT(app_name, worker_id) DO UPDATE SET
         state = excluded.state,
         pid   = excluded.pid,
-        started_at = unixepoch('now') * 1000
+        started_at = CASE
+          WHEN excluded.pid != workers.pid THEN unixepoch('now') * 1000
+          ELSE workers.started_at
+        END
     `);
     stmt.run(appName, workerId, state, pid ?? null);
   }
@@ -252,7 +260,10 @@ export class SqliteStore {
     const stmt = this.db.prepare(`
       DELETE FROM restart_history
       WHERE id NOT IN (
-        SELECT id FROM restart_history ORDER BY created_at DESC LIMIT ?1
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY app_name ORDER BY created_at DESC, id DESC) AS rn
+          FROM restart_history
+        ) WHERE rn <= ?1
       )
     `);
     stmt.run(maxEntries);

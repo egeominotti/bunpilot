@@ -44,7 +44,7 @@ export async function daemonCommand(
 // Sub-commands
 // ---------------------------------------------------------------------------
 
-function daemonStart(): void {
+async function daemonStart(): Promise<void> {
   // Check if already running
   const pid = readPidFile(PID_FILE);
   if (pid !== null && isProcessRunning(pid)) {
@@ -53,7 +53,7 @@ function daemonStart(): void {
   }
 
   // daemonize() calls process.exit(0) internally
-  daemonize(process.cwd());
+  await daemonize(process.cwd());
 }
 
 async function daemonStop(): Promise<void> {

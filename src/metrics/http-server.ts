@@ -114,7 +114,15 @@ export class MetricsHttpServer {
 
   private handleJsonMetricsForApp(path: string): Response {
     // Extract app name from "/api/metrics/<appName>"
-    const appName = decodeURIComponent(path.slice('/api/metrics/'.length));
+    let appName: string;
+    try {
+      appName = decodeURIComponent(path.slice('/api/metrics/'.length));
+    } catch {
+      return new Response('Bad Request: malformed percent-encoding', {
+        status: 400,
+        headers: { 'Content-Type': CONTENT_TYPE_TEXT },
+      });
+    }
     if (!appName) {
       return MetricsHttpServer.notFound();
     }
