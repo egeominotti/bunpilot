@@ -370,3 +370,34 @@ describe('ANSI formatting in output', () => {
     expect(stdout.trim()).not.toContain('\x1b[');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bug 3: main() called without .catch()
+// ---------------------------------------------------------------------------
+//
+// Verifies that the entry point handles unhandled promise rejections from
+// main() by catching them and exiting with code 1. Without the .catch(),
+// an unhandled rejection would either silently fail or produce a different
+// exit behavior depending on the runtime.
+// ---------------------------------------------------------------------------
+
+describe('main() error handling', () => {
+  test('main() call has .catch() to handle rejections (source inspection)', async () => {
+    // Read the actual source file and verify the main() call includes .catch()
+    const source = await Bun.file(ENTRY).text();
+
+    // The fix: main() should be called with .catch((err) => { ... process.exit(1) })
+    // or equivalent error handling
+    expect(source).toMatch(/main\(\)\s*\.catch\s*\(/);
+  });
+
+  test('process exits with code 1 on fatal errors in commands', async () => {
+    // An unknown command triggers the default case which calls process.exit(1).
+    // This verifies the outer error handling chain works end-to-end.
+    const { exitCode, stderr } = await runCLI(['nonexistent-command-xyz']);
+    const plain = stripAnsi(stderr);
+
+    expect(exitCode).toBe(1);
+    expect(plain).toContain('Unknown command');
+  });
+});

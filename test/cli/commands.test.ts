@@ -468,6 +468,74 @@ describe('startCommand', () => {
     ).toHaveProperty('name', 'api');
   });
 
+  test('exits with error for negative --instances value', async () => {
+    const tracker = buildConnectMock({});
+
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+    mock.module('../../src/config/loader', () => ({
+      loadConfig: async () => ({ apps: [] }),
+      loadFromCLI: () => ({
+        name: 'test-app',
+        script: 'app.ts',
+        instances: 1,
+        maxRestarts: 10,
+        maxRestartWindow: 60000,
+        minUptime: 1000,
+        backoff: { initial: 100, multiplier: 2, max: 30000 },
+        killTimeout: 5000,
+        shutdownSignal: 'SIGTERM',
+        readyTimeout: 10000,
+      }),
+    }));
+
+    const { startCommand } = await import('../../src/cli/commands/start');
+    captured = captureConsole();
+
+    try {
+      await startCommand(['app.ts'], { instances: '-5' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --instances');
+  });
+
+  test('exits with error for zero --instances value', async () => {
+    const tracker = buildConnectMock({});
+
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+    mock.module('../../src/config/loader', () => ({
+      loadConfig: async () => ({ apps: [] }),
+      loadFromCLI: () => ({
+        name: 'test-app',
+        script: 'app.ts',
+        instances: 1,
+        maxRestarts: 10,
+        maxRestartWindow: 60000,
+        minUptime: 1000,
+        backoff: { initial: 100, multiplier: 2, max: 30000 },
+        killTimeout: 5000,
+        shutdownSignal: 'SIGTERM',
+        readyTimeout: 10000,
+      }),
+    }));
+
+    const { startCommand } = await import('../../src/cli/commands/start');
+    captured = captureConsole();
+
+    try {
+      await startCommand(['app.ts'], { instances: '0' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --instances');
+  });
+
   // Bug 3: parseInt produces NaN for invalid CLI flags
   test('exits with error for invalid --instances value', async () => {
     const tracker = buildConnectMock({});
@@ -501,6 +569,108 @@ describe('startCommand', () => {
     expect(exitCalls).toContain(1);
     const errOutput = captured.errors.join('\n');
     expect(errOutput).toContain('Invalid --instances');
+  });
+
+  test('exits with error for negative --port value', async () => {
+    const tracker = buildConnectMock({});
+
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+    mock.module('../../src/config/loader', () => ({
+      loadConfig: async () => ({ apps: [] }),
+      loadFromCLI: () => ({
+        name: 'test-app',
+        script: 'app.ts',
+        instances: 1,
+        maxRestarts: 10,
+        maxRestartWindow: 60000,
+        minUptime: 1000,
+        backoff: { initial: 100, multiplier: 2, max: 30000 },
+        killTimeout: 5000,
+        shutdownSignal: 'SIGTERM',
+        readyTimeout: 10000,
+      }),
+    }));
+
+    const { startCommand } = await import('../../src/cli/commands/start');
+    captured = captureConsole();
+
+    try {
+      await startCommand(['app.ts'], { port: '-1' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --port');
+  });
+
+  test('exits with error for --port value above 65535', async () => {
+    const tracker = buildConnectMock({});
+
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+    mock.module('../../src/config/loader', () => ({
+      loadConfig: async () => ({ apps: [] }),
+      loadFromCLI: () => ({
+        name: 'test-app',
+        script: 'app.ts',
+        instances: 1,
+        maxRestarts: 10,
+        maxRestartWindow: 60000,
+        minUptime: 1000,
+        backoff: { initial: 100, multiplier: 2, max: 30000 },
+        killTimeout: 5000,
+        shutdownSignal: 'SIGTERM',
+        readyTimeout: 10000,
+      }),
+    }));
+
+    const { startCommand } = await import('../../src/cli/commands/start');
+    captured = captureConsole();
+
+    try {
+      await startCommand(['app.ts'], { port: '70000' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --port');
+  });
+
+  test('exits with error for --port value of zero', async () => {
+    const tracker = buildConnectMock({});
+
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+    mock.module('../../src/config/loader', () => ({
+      loadConfig: async () => ({ apps: [] }),
+      loadFromCLI: () => ({
+        name: 'test-app',
+        script: 'app.ts',
+        instances: 1,
+        maxRestarts: 10,
+        maxRestartWindow: 60000,
+        minUptime: 1000,
+        backoff: { initial: 100, multiplier: 2, max: 30000 },
+        killTimeout: 5000,
+        shutdownSignal: 'SIGTERM',
+        readyTimeout: 10000,
+      }),
+    }));
+
+    const { startCommand } = await import('../../src/cli/commands/start');
+    captured = captureConsole();
+
+    try {
+      await startCommand(['app.ts'], { port: '0' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --port');
   });
 
   test('exits with error for invalid --port value', async () => {

@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { sendCommand, requireArg } from './_connect';
+import { logError } from '../format';
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -29,7 +30,11 @@ export async function logsCommand(
   if (flags.lines) {
     const parsed = parseInt(String(flags.lines), 10);
     if (Number.isNaN(parsed)) {
-      console.error(`Invalid --lines value: "${String(flags.lines)}". Expected a number.`);
+      logError(`Invalid --lines value: "${String(flags.lines)}". Expected a number.`);
+      process.exit(1);
+    }
+    if (parsed < 1) {
+      logError(`Invalid --lines value: "${String(flags.lines)}". Must be at least 1.`);
       process.exit(1);
     }
     lines = parsed;

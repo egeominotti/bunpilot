@@ -47,6 +47,8 @@ function initWorkerSlots(proxy: ProxyCluster, count: number): void {
     p.workers.set(i, { port: INTERNAL_PORT_BASE + i, alive: false });
   }
   p.rrIndex = 0;
+  // Rebuild the sorted worker ID cache (mirrors ProxyCluster.start())
+  p.sortedWorkerIds = Array.from(p.workers.keys()).sort((a: number, b: number) => a - b);
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +367,102 @@ describe('ProxyCluster', () => {
     test('getWorkerEnv returns correct port for replacement workers', () => {
       const env = proxy.getWorkerEnv(5, 3000);
       expect(env.BUNPILOT_PORT).toBe(String(INTERNAL_PORT_BASE + 5));
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug: nextAliveWorker should use a cached sorted list
+  // -----------------------------------------------------------------------
+
+  describe('sorted worker list caching (performance)', () => {
+    test('sortedWorkerIds is rebuilt when addWorker is called', () => {
+      initWorkerSlots(proxy, 3);
+      proxy.addWorker(0);
+      proxy.addWorker(2);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const p = proxy as any;
+      const cached: number[] = p.sortedWorkerIds;
+
+      // Cache should exist and contain sorted keys
+      expect(Array.isArray(cached)).toBe(true);
+      expect(cached.length).toBeGreaterThan(0);
+    });
+
+    test('sortedWorkerIds is rebuilt when removeWorker is called', () => {
+      initWorkerSlots(proxy, 3);
+      proxy.addWorker(0);
+      proxy.addWorker(1);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const p = proxy as any;
+      const cacheAfterAdd = [...p.sortedWorkerIds];
+
+      proxy.removeWorker(1);
+      const cacheAfterRemove = [...p.sortedWorkerIds];
+
+      // Cache should still be a valid array (same length since removeWorker
+      // marks alive=false but doesn't delete the slot)
+      expect(Array.isArray(cacheAfterRemove)).toBe(true);
+      // Lengths are the same since the slot still exists, just marked dead
+      expect(cacheAfterRemove.length).toBe(cacheAfterAdd.length);
+    });
+
+    test('nextAliveWorker does not create a new sorted array on each call', () => {
+      initWorkerSlots(proxy, 3);
+      proxy.addWorker(0);
+      proxy.addWorker(1);
+      proxy.addWorker(2);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const p = proxy as any;
+
+      // Grab reference to cached array before calls
+      const cachedBefore: number[] = p.sortedWorkerIds;
+
+      const internals = getInternals(proxy);
+      internals.nextAliveWorker();
+      internals.nextAliveWorker();
+      internals.nextAliveWorker();
+
+      // After multiple calls, the cache reference should be the same object
+      // (not re-created on each call)
+      const cachedAfter: number[] = p.sortedWorkerIds;
+      expect(cachedAfter).toBe(cachedBefore); // same reference
+    });
+
+    test('cache is invalidated when a new replacement worker is added', () => {
+      initWorkerSlots(proxy, 2);
+      proxy.addWorker(0);
+      proxy.addWorker(1);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const p = proxy as any;
+      const cacheBefore: number[] = p.sortedWorkerIds;
+
+      // Add a replacement worker with a new ID
+      proxy.addWorker(5);
+
+      const cacheAfter: number[] = p.sortedWorkerIds;
+      // Cache should have been rebuilt (new reference)
+      expect(cacheAfter).not.toBe(cacheBefore);
+      // And it should include the new worker ID
+      expect(cacheAfter).toContain(5);
+    });
+
+    test('cached sortedWorkerIds are in ascending order', () => {
+      initWorkerSlots(proxy, 2);
+      proxy.addWorker(1);
+      proxy.addWorker(0);
+      // Add out-of-order replacement workers
+      proxy.addWorker(10);
+      proxy.addWorker(5);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cached: number[] = (proxy as any).sortedWorkerIds;
+      for (let i = 1; i < cached.length; i++) {
+        expect(cached[i]).toBeGreaterThan(cached[i - 1]);
+      }
     });
   });
 

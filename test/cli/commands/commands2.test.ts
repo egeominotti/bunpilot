@@ -490,6 +490,46 @@ describe('logsCommand', () => {
     expect(exitCalls).toContain(1);
   });
 
+  test('exits with error for negative --lines value', async () => {
+    mockConnect({
+      sendCommand: async () => ({ id: '1', ok: true, data: [] }),
+    });
+
+    const { logsCommand } = await import('../../../src/cli/commands/logs');
+
+    captured = captureConsole();
+
+    try {
+      await logsCommand(['my-app'], { lines: '-10' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --lines');
+  });
+
+  test('exits with error for zero --lines value', async () => {
+    mockConnect({
+      sendCommand: async () => ({ id: '1', ok: true, data: [] }),
+    });
+
+    const { logsCommand } = await import('../../../src/cli/commands/logs');
+
+    captured = captureConsole();
+
+    try {
+      await logsCommand(['my-app'], { lines: '0' });
+    } catch {
+      // process.exit throws
+    }
+
+    expect(exitCalls).toContain(1);
+    const errOutput = captured.errors.join('\n');
+    expect(errOutput).toContain('Invalid --lines');
+  });
+
   // Bug 3: Invalid --lines value should exit with error
   test('exits with error for invalid --lines value', async () => {
     mockConnect({

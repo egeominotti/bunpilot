@@ -85,6 +85,10 @@ export async function startCommand(
         );
         process.exit(1);
       }
+      if (parsed < 1) {
+        logError(`Invalid --instances value: "${String(flags.instances)}". Must be at least 1.`);
+        process.exit(1);
+      }
       instances = parsed;
     }
   }
@@ -94,6 +98,10 @@ export async function startCommand(
     const parsed = parseInt(String(flags.port), 10);
     if (Number.isNaN(parsed)) {
       logError(`Invalid --port value: "${String(flags.port)}". Expected a number.`);
+      process.exit(1);
+    }
+    if (parsed < 1 || parsed > 65535) {
+      logError(`Invalid --port value: "${String(flags.port)}". Must be between 1 and 65535.`);
       process.exit(1);
     }
     port = parsed;

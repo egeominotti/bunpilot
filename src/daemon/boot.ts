@@ -51,9 +51,9 @@ async function main(): Promise<void> {
     startApp: async (name) => {
       const config = pendingConfigs.get(name);
       if (!config) throw new Error(`No config found for app "${name}"`);
-      pendingConfigs.delete(name);
       store.saveApp(name, config);
       await master.startApp(config);
+      pendingConfigs.delete(name);
     },
 
     stopApp: (name) => {
@@ -161,9 +161,8 @@ async function main(): Promise<void> {
         console.log(`[daemon] auto-starting "${app.name}" from config`);
         await master.startApp(app);
       }
-    } catch {
-      // Config loading is optional — daemon can run empty
-      console.log('[daemon] no config loaded, waiting for commands...');
+    } catch (err) {
+      console.warn('[daemon] config load failed:', err instanceof Error ? err.message : err);
     }
   }
 
@@ -210,12 +209,48 @@ function appStatusToMetricsInput(apps: AppStatus[]): AppMetricsInput[] {
 // Log file reader
 // ---------------------------------------------------------------------------
 
+/**
+ * Extract the rotation index from a log filename.
+ * - `app-0-out.log`   → -1  (current / newest)
+ * - `app-0-out.0.log` → 0
+ * - `app-0-out.1.log` → 1
+ * - `app-0-out.2.log` → 2   (oldest)
+ */
+function rotationIndex(filename: string): number {
+  const match = filename.match(/\.(\d+)\.log$/);
+  return match ? parseInt(match[1], 10) : -1;
+}
+
+/**
+ * Compare rotated log filenames so oldest content comes first.
+ *
+ * Sort order: highest rotation number first (oldest), then descending to
+ * `.0.log`, then the current `.log` (newest). Files with different base
+ * names (e.g. `out` vs `err`) are grouped alphabetically by base name.
+ */
+function compareRotatedLogs(a: string, b: string): number {
+  const idxA = rotationIndex(a);
+  const idxB = rotationIndex(b);
+
+  // Extract base name (everything before the rotation suffix)
+  const baseA = a.replace(/(\.\d+)?\.log$/, '');
+  const baseB = b.replace(/(\.\d+)?\.log$/, '');
+
+  // Group by base name first
+  if (baseA !== baseB) return baseA.localeCompare(baseB);
+
+  // Within same base: higher rotation index = older = comes first
+  // Current file (idx -1) is newest = comes last
+  return idxB - idxA;
+}
+
 function readLogLines(appName: string, maxLines: number): string[] {
   const appDir = join(LOGS_DIR, appName);
   if (!existsSync(appDir)) return [];
 
   const files = readdirSync(appDir)
     .filter((f) => f.endsWith('.log'))
+    .sort(compareRotatedLogs)
     .map((f) => join(appDir, f));
 
   if (files.length === 0) return [];

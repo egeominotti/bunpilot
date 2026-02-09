@@ -51,6 +51,9 @@ export class ProxyCluster {
   /** Worker slots keyed by workerId. Supports non-contiguous IDs for replacement workers. */
   private workers: Map<number, WorkerSlot> = new Map();
 
+  /** Cached sorted list of worker IDs. Rebuilt only when workers are added/removed. */
+  private sortedWorkerIds: number[] = [];
+
   /** Round-robin cursor – always points at the *next* index to try. */
   private rrIndex = 0;
 
@@ -72,6 +75,7 @@ export class ProxyCluster {
     }
 
     this.rrIndex = 0;
+    this.rebuildSortedWorkerIds();
 
     this.listener = Bun.listen<ConnState>({
       hostname: '0.0.0.0',
@@ -127,6 +131,7 @@ export class ProxyCluster {
         alive: true,
       });
     }
+    this.rebuildSortedWorkerIds();
   }
 
   /** Mark worker as dead so the proxy stops sending it traffic. */
@@ -135,6 +140,7 @@ export class ProxyCluster {
     if (slot) {
       slot.alive = false;
     }
+    this.rebuildSortedWorkerIds();
   }
 
   /** Stop the public listener and release all resources. */
@@ -144,7 +150,17 @@ export class ProxyCluster {
       this.listener = null;
     }
     this.workers = new Map();
+    this.sortedWorkerIds = [];
     this.rrIndex = 0;
+  }
+
+  // -----------------------------------------------------------------------
+  // Cache management
+  // -----------------------------------------------------------------------
+
+  /** Rebuild the cached sorted worker ID list from the current workers map. */
+  private rebuildSortedWorkerIds(): void {
+    this.sortedWorkerIds = Array.from(this.workers.keys()).sort((a, b) => a - b);
   }
 
   // -----------------------------------------------------------------------
@@ -156,14 +172,14 @@ export class ProxyCluster {
    * Returns `null` when no workers are alive.
    */
   private nextAliveWorker(): WorkerSlot | null {
-    const entries = Array.from(this.workers.entries()).sort((a, b) => a[0] - b[0]);
-    const total = entries.length;
+    const ids = this.sortedWorkerIds;
+    const total = ids.length;
     if (total === 0) return null;
 
     for (let i = 0; i < total; i++) {
       const idx = (this.rrIndex + i) % total;
-      const worker = entries[idx][1];
-      if (worker.alive) {
+      const worker = this.workers.get(ids[idx]);
+      if (worker?.alive) {
         this.rrIndex = (idx + 1) % total;
         return worker;
       }
