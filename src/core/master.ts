@@ -4,9 +4,11 @@
 
 import { cpus } from 'node:os';
 import type { AppConfig, AppStatus, WorkerInfo } from '../config/types';
-import { DEFAULT_LOGS } from '../constants';
+import { DEFAULT_LOGS, PORT_RELEASE_DELAY } from '../constants';
 import { LogManager } from '../logs/manager';
 import { HealthChecker } from '../health/checker';
+import { ProxyCluster } from '../cluster/proxy';
+import { detectStrategy } from '../cluster/platform';
 import { ProcessManager } from './process-manager';
 import { CrashRecovery } from './backoff';
 import { WorkerLifecycle } from './lifecycle';
@@ -19,6 +21,7 @@ import { WorkerHandler, type ManagedApp } from './worker-handler';
 
 export class MasterOrchestrator {
   private readonly apps = new Map<string, ManagedApp>();
+  private readonly proxies = new Map<string, ProxyCluster>();
   private readonly processManager = new ProcessManager();
   private readonly crashRecovery = new CrashRecovery();
   private readonly lifecycle = new WorkerLifecycle();
@@ -71,6 +74,13 @@ export class MasterOrchestrator {
     };
     this.apps.set(config.name, managed);
 
+    // Start proxy if needed (proxy strategy, clustered, with a port).
+    if (this.shouldUseProxy(managed.config, instances)) {
+      const proxy = this.createProxyCluster();
+      proxy.start(managed.config.port!, instances);
+      this.proxies.set(config.name, proxy);
+    }
+
     for (let i = 0; i < instances; i++) {
       this.spawnWorker(managed, i);
     }
@@ -91,6 +101,10 @@ export class MasterOrchestrator {
 
     await this.workerHandler.stopAllWorkers(managed);
     managed.startedAt = null;
+
+    // Stop proxy if present.
+    this.proxies.get(name)?.stop();
+    this.proxies.delete(name);
   }
 
   // -----------------------------------------------------------------------
@@ -108,15 +122,32 @@ export class MasterOrchestrator {
 
     await this.workerHandler.stopAllWorkers(managed);
 
+    // Stop old proxy before respawning.
+    this.proxies.get(name)?.stop();
+    this.proxies.delete(name);
+
     // Bug 6 fix: Clear stable timers and backoff timers from old generation.
     this.workerHandler.cleanupApp(managed);
 
     const instances = this.resolveInstances(managed.config.instances);
 
+    // Allow the OS to release ports before spawning new workers.
+    // Needed for any app with a port (public or internal) to avoid EADDRINUSE.
+    if (managed.config.port) {
+      await new Promise((resolve) => setTimeout(resolve, PORT_RELEASE_DELAY));
+    }
+
     managed.workers = [];
     managed.spawned.clear();
     managed.startedAt = Date.now();
     managed.nextWorkerId = instances;
+
+    // Create new proxy if needed.
+    if (this.shouldUseProxy(managed.config, instances)) {
+      const proxy = this.createProxyCluster();
+      proxy.start(managed.config.port!, instances);
+      this.proxies.set(name, proxy);
+    }
 
     for (let i = 0; i < instances; i++) {
       this.spawnWorker(managed, i);
@@ -140,7 +171,10 @@ export class MasterOrchestrator {
         const newId = managed.nextWorkerId++;
         return this.spawnWorker(managed, newId);
       },
-      drainAndStop: (w) => this.workerHandler.drainAndStopWorker(managed, w),
+      drainAndStop: (w) => {
+        this.proxies.get(managed.config.name)?.removeWorker(w.id);
+        return this.workerHandler.drainAndStopWorker(managed, w);
+      },
     });
   }
 
@@ -159,6 +193,11 @@ export class MasterOrchestrator {
 
       await this.workerHandler.stopAllWorkers(managed);
       this.workerHandler.cleanupApp(managed);
+
+      // Stop proxy if present.
+      this.proxies.get(name)?.stop();
+      this.proxies.delete(name);
+
       this.apps.delete(name);
     }
   }
@@ -187,6 +226,12 @@ export class MasterOrchestrator {
   async shutdown(_signal: string): Promise<void> {
     // Stop all health monitors first.
     this.healthChecker.stopAll();
+
+    // Stop all proxies.
+    for (const proxy of this.proxies.values()) {
+      proxy.stop();
+    }
+    this.proxies.clear();
 
     const names = [...this.apps.keys()];
     await Promise.all(names.map((n) => this.stopApp(n)));
@@ -226,12 +271,17 @@ export class MasterOrchestrator {
       workerId,
       (wid, msg) => {
         this.workerHandler.handleMessage(managed, wid, msg);
+        if (msg.type === 'ready') {
+          this.proxies.get(managed.config.name)?.addWorker(wid);
+        }
         if (msg.type === 'heartbeat') {
           this.healthChecker.onHeartbeat(wid);
         }
       },
-      (wid, code, sig) =>
-        this.workerHandler.handleExit(managed, wid, code, sig, (m, w) => this.restartWorker(m, w)),
+      (wid, code, sig) => {
+        this.proxies.get(managed.config.name)?.removeWorker(wid);
+        this.workerHandler.handleExit(managed, wid, code, sig, (m, w) => this.restartWorker(m, w));
+      },
     );
 
     worker.pid = spawned.pid;
@@ -293,12 +343,17 @@ export class MasterOrchestrator {
       worker.id,
       (wid, msg) => {
         this.workerHandler.handleMessage(managed, wid, msg);
+        if (msg.type === 'ready') {
+          this.proxies.get(managed.config.name)?.addWorker(wid);
+        }
         if (msg.type === 'heartbeat') {
           this.healthChecker.onHeartbeat(wid);
         }
       },
-      (wid, code, sig) =>
-        this.workerHandler.handleExit(managed, wid, code, sig, (m, w) => this.restartWorker(m, w)),
+      (wid, code, sig) => {
+        this.proxies.get(managed.config.name)?.removeWorker(wid);
+        this.workerHandler.handleExit(managed, wid, code, sig, (m, w) => this.restartWorker(m, w));
+      },
     );
 
     worker.pid = spawned.pid;
@@ -366,6 +421,19 @@ export class MasterOrchestrator {
       throw new Error(`App "${name}" not found.`);
     }
     return managed;
+  }
+
+  /** Check whether an app should use the TCP proxy cluster. */
+  private shouldUseProxy(config: AppConfig, instances: number): boolean {
+    if (!config.clustering?.enabled) return false;
+    if (instances <= 1) return false;
+    if (config.port === undefined) return false;
+    return detectStrategy(config.clustering.strategy ?? 'auto') === 'proxy';
+  }
+
+  /** Factory method for ProxyCluster — overridden in tests. */
+  private createProxyCluster(): ProxyCluster {
+    return new ProxyCluster();
   }
 
   private toAppStatus(managed: ManagedApp): AppStatus {

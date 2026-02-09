@@ -37,6 +37,9 @@ export const CONFIG_FILES = ['bunpilot.config.ts', 'bunpilot.config.js', 'bunpil
 
 export const INTERNAL_PORT_BASE = 40_001;
 
+/** Delay (ms) after stopping workers to let the OS release the port before respawn. */
+export const PORT_RELEASE_DELAY = 500;
+
 /** Env keys the master uses internally – never leaked to workers */
 export const INTERNAL_ENV_KEYS = new Set([
   'BUNPILOT_DAEMON',
