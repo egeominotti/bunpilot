@@ -179,7 +179,7 @@ describe('showVersion', () => {
     const { stdout } = await runCLI(['--version']);
     const plain = stripAnsi(stdout).trim();
 
-    expect(plain).toBe('bunpilot v0.1.1');
+    expect(plain).toBe('bunpilot v0.2.1');
   });
 
   test('--version takes precedence over help when command is empty', async () => {
