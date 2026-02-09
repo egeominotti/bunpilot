@@ -53,6 +53,26 @@ export async function startCommand(
     process.exit(1);
   }
 
+  // Auto-detect config files passed as positional argument (e.g. `bunpilot start my.config.ts`)
+  if (isConfigFile(script)) {
+    const bunpilotConfig = await loadConfig(script).catch((err) => {
+      logError(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    });
+
+    if (bunpilotConfig.apps.length === 0) {
+      logError('No apps defined in config file');
+      process.exit(1);
+    }
+
+    for (const app of bunpilotConfig.apps) {
+      log('start', `Starting "${app.name}" ...`);
+      await sendCommand('start', { name: app.name, config: app }, { silent: true });
+      logSuccess(`"${app.name}" started`);
+    }
+    return;
+  }
+
   let instances: number | 'max' | undefined;
   if (flags.instances) {
     if (flags.instances === 'max') {
@@ -93,4 +113,15 @@ export async function startCommand(
   log('start', `Starting "${name}" ...`);
   await sendCommand('start', { name, config }, { silent: true });
   logSuccess(`"${name}" started`);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const CONFIG_PATTERNS = ['.config.ts', '.config.js', 'bunpilot.json'];
+
+/** Check if a path looks like a bunpilot config file rather than a script. */
+function isConfigFile(path: string): boolean {
+  return CONFIG_PATTERNS.some((p) => path.endsWith(p));
 }

@@ -189,7 +189,7 @@ describe('setupSignalHandlers', () => {
   // Shutdown handler
   // -------------------------------------------------------------------------
 
-  test('shutdown handler calls onShutdown with the signal name', () => {
+  test('shutdown handler calls onShutdown with the signal name', async () => {
     let receivedSignal: string | null = null;
 
     // We need to prevent process.exit from actually exiting
@@ -208,16 +208,15 @@ describe('setupSignalHandlers', () => {
     const sigtermHandler = addedListeners.get('SIGTERM')![0];
     sigtermHandler('SIGTERM');
 
-    // Need to wait for the promise to resolve
-    // The handler wraps onShutdown in Promise.resolve
-    setTimeout(() => {}, 0);
+    // Wait for the .finally() microtask (process.exit) to fire while still mocked
+    await new Promise((r) => setTimeout(r, 10));
 
     expect(receivedSignal).toBe('SIGTERM');
 
     process.exit = originalExit;
   });
 
-  test('shuttingDown guard prevents double shutdown', () => {
+  test('shuttingDown guard prevents double shutdown', async () => {
     let shutdownCount = 0;
 
     const originalExit = process.exit;
@@ -238,13 +237,16 @@ describe('setupSignalHandlers', () => {
     sigtermHandler('SIGTERM');
     sigtermHandler('SIGTERM');
 
+    // Wait for the .finally() microtask to fire while still mocked
+    await new Promise((r) => setTimeout(r, 10));
+
     // Only one should have been processed due to shuttingDown guard
     expect(shutdownCount).toBe(1);
 
     process.exit = originalExit;
   });
 
-  test('SIGINT handler also triggers shutdown', () => {
+  test('SIGINT handler also triggers shutdown', async () => {
     let receivedSignal: string | null = null;
 
     const originalExit = process.exit;
@@ -262,12 +264,15 @@ describe('setupSignalHandlers', () => {
     const sigintHandler = addedListeners.get('SIGINT')![0];
     sigintHandler('SIGINT');
 
+    // Wait for the .finally() microtask to fire while still mocked
+    await new Promise((r) => setTimeout(r, 10));
+
     expect(receivedSignal).toBe('SIGINT');
 
     process.exit = originalExit;
   });
 
-  test('shuttingDown guard blocks SIGINT after SIGTERM', () => {
+  test('shuttingDown guard blocks SIGINT after SIGTERM', async () => {
     let shutdownCount = 0;
 
     const originalExit = process.exit;
@@ -289,6 +294,9 @@ describe('setupSignalHandlers', () => {
     sigtermHandler('SIGTERM');
     // Second SIGINT should be blocked by shuttingDown
     sigintHandler('SIGINT');
+
+    // Wait for the .finally() microtask to fire while still mocked
+    await new Promise((r) => setTimeout(r, 10));
 
     expect(shutdownCount).toBe(1);
 
