@@ -81,9 +81,16 @@ export class WorkerHandler {
     worker.signalCode = signalCode;
     this.clearStableTimer(managed, workerId);
 
-    // Graceful stop completes normally.
+    // Graceful stop completes normally. M3 fix: a 'draining' worker must step
+    // through 'stopping' first (draining -> stopped is not a valid transition),
+    // otherwise it would get stuck in 'draining' on exit.
     if (worker.state === 'stopping' || worker.state === 'draining') {
-      this.transitionWorker(worker, 'stopped');
+      if (worker.state === 'draining') {
+        this.transitionWorker(worker, 'stopping');
+      }
+      if (!this.transitionWorker(worker, 'stopped')) {
+        worker.state = 'stopped';
+      }
       return;
     }
 
@@ -168,10 +175,17 @@ export class WorkerHandler {
 
     await Promise.all(
       active.map(async (worker) => {
-        // Transition through draining/stopping if the state machine allows it
+        // Transition through draining/stopping if the state machine allows it.
         if (this.lifecycle.canTransition(worker.state, 'draining')) {
           this.transitionWorker(worker, 'draining');
           this.transitionWorker(worker, 'stopping');
+        } else {
+          // H4 fix: 'starting'/'spawning' workers can't reach 'draining'. Force
+          // them to 'stopping' BEFORE the kill so that if the process exits
+          // mid-kill, handleExit classifies it as a graceful stop rather than a
+          // crash (which would pollute crash counters and set a stale backoff
+          // timer). Shutdown is authoritative.
+          worker.state = 'stopping';
         }
 
         const spawned = managed.spawned.get(worker.id);
@@ -186,6 +200,8 @@ export class WorkerHandler {
         // Force state to stopped regardless of current state (shutdown is authoritative)
         worker.state = 'stopped';
         this.clearStableTimer(managed, worker.id);
+        // Belt-and-suspenders: drop any backoff timer a mid-kill exit may have set.
+        this.clearBackoffTimer(worker.id);
       }),
     );
 
@@ -214,6 +230,15 @@ export class WorkerHandler {
     if (timer) {
       clearTimeout(timer);
       managed.stableTimers.delete(workerId);
+    }
+  }
+
+  /** Clear a pending crash-backoff timer for a single worker, if any. */
+  clearBackoffTimer(workerId: number): void {
+    const timer = this.backoffTimers.get(workerId);
+    if (timer) {
+      clearTimeout(timer);
+      this.backoffTimers.delete(workerId);
     }
   }
 

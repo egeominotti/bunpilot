@@ -114,10 +114,12 @@ export class LogManager {
     prefix: string,
   ): Promise<void> {
     const decoder = new TextDecoder();
+    const reader = stream.getReader();
 
+    // A normal end-of-stream surfaces as `{ done: true }` — never an error — so
+    // any thrown error here is unexpected (broken pipe, disk full, …) and is
+    // surfaced rather than classified by fragile error-message substrings.
     try {
-      const reader = stream.getReader();
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -126,8 +128,7 @@ export class LogManager {
 
         if (console) {
           const text = decoder.decode(value, { stream: true });
-          const lines = text.split('\n');
-          for (const line of lines) {
+          for (const line of text.split('\n')) {
             if (line.length > 0) {
               console.write(`${prefix} ${line}\n`);
             }
@@ -135,16 +136,13 @@ export class LogManager {
         }
       }
     } catch (err: unknown) {
-      // Differentiate between expected stream-close errors and real failures
       const msg = err instanceof Error ? err.message : String(err);
-      const isStreamClose =
-        msg.includes('ReadableStream') ||
-        msg.includes('stream') ||
-        msg.includes('cancel') ||
-        msg.includes('reader');
-
-      if (!isStreamClose) {
-        process.stderr.write(`${prefix} log pipe error: ${msg}\n`);
+      process.stderr.write(`${prefix} log pipe error: ${msg}\n`);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* reader may already be released */
       }
     }
   }

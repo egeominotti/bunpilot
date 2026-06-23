@@ -122,9 +122,6 @@ function createMockProxy(ctx: TestContext) {
     stop() {
       ctx.proxyCalls.push({ method: 'stop', args: [] });
     },
-    getWorkerEnv(workerId: number, port: number) {
-      return { BUNPILOT_PORT: String(40001 + workerId), BUNPILOT_REUSE_PORT: '0' };
-    },
   };
 }
 
@@ -1493,6 +1490,141 @@ describe('MasterOrchestrator', () => {
 
       // No proxy calls should have been made
       expect(ctx.proxyCalls.length).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // C1: restartWorker awaits the kill before spawning the replacement
+  // -------------------------------------------------------------------------
+
+  describe('restartWorker awaits kill before respawn (C1)', () => {
+    test('spawns the replacement strictly after the old process has exited', async () => {
+      const config = makeConfig({ name: 'c1-app', instances: 1, port: 3000 });
+      await master.startApp(config);
+
+      // Bring the worker online so the heartbeat-stale path restarts it.
+      ctx.messageCallbacks.get(0)!(0, { type: 'ready' });
+
+      const m = master as any;
+      const order: string[] = [];
+      const realSpawn = m.processManager.spawnWorker.bind(m.processManager);
+
+      // Old process appears alive; killWorker is slow and records ordering.
+      ctx.isRunningResult = true;
+      m.processManager.killWorker = async () => {
+        order.push('kill-start');
+        await new Promise((r) => setTimeout(r, 40));
+        order.push('kill-end');
+        return 'exited' as const;
+      };
+      m.processManager.spawnWorker = (
+        cfg: AppConfig,
+        wid: number,
+        onMsg: (w: number, msg: unknown) => void,
+        onExit: (w: number, c: number | null, s: string | null) => void,
+      ) => {
+        order.push('spawn');
+        return realSpawn(cfg, wid, onMsg, onExit);
+      };
+
+      // Trigger restart via the heartbeat-stale callback on the online worker.
+      ctx.heartbeatStaleCallbacks.get(0)!(0);
+
+      // Wait out the kill (40ms) + port-release delay (500ms) + spawn.
+      await new Promise((r) => setTimeout(r, 700));
+
+      // Before the C1 fix, 'spawn' raced ahead of 'kill-end'.
+      expect(order).toEqual(['kill-start', 'kill-end', 'spawn']);
+    });
+
+    test('graceful kill during a ported restart is not counted as a crash (C1.1)', async () => {
+      const config = makeConfig({ name: 'c1b-app', instances: 1, port: 3002 });
+      await master.startApp(config);
+      ctx.messageCallbacks.get(0)!(0, { type: 'ready' }); // online
+
+      const m = master as any;
+      const worker = m.apps.get('c1b-app').workers[0];
+
+      ctx.isRunningResult = true;
+      // The old process exits *because* of our SIGTERM, mid-kill.
+      m.processManager.killWorker = async () => {
+        ctx.exitCallbacks.get(0)!(0, null, 'SIGTERM');
+        return 'exited' as const;
+      };
+
+      // Restart via heartbeat-stale on the online worker.
+      ctx.heartbeatStaleCallbacks.get(0)!(0);
+
+      // Wait out the kill + port-release delay + respawn.
+      await new Promise((r) => setTimeout(r, 700));
+
+      // The graceful kill must NOT inflate crash accounting.
+      expect(worker.consecutiveCrashes).toBe(0);
+      // And the worker came back up (restart succeeded).
+      expect(worker.restartCount).toBe(1);
+      expect(worker.state).toBe('starting');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // H2: startApp rolls back registration on failure
+  // -------------------------------------------------------------------------
+
+  describe('startApp rollback on failure (H2)', () => {
+    test('does not leave the app registered when a spawn throws, and retry succeeds', async () => {
+      const config = makeConfig({ name: 'rollback-app', instances: 1 });
+      const m = master as any;
+      const realSpawn = m.processManager.spawnWorker.bind(m.processManager);
+      let failNext = true;
+      m.processManager.spawnWorker = (
+        cfg: AppConfig,
+        wid: number,
+        onMsg: (w: number, msg: unknown) => void,
+        onExit: (w: number, c: number | null, s: string | null) => void,
+      ) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error('spawn failed');
+        }
+        return realSpawn(cfg, wid, onMsg, onExit);
+      };
+
+      expect(master.startApp(config)).rejects.toThrow('spawn failed');
+      // Let the rejection settle.
+      await new Promise((r) => setTimeout(r, 10));
+
+      // The app name must not be wedged.
+      expect(master.getAppStatus('rollback-app')).toBeNull();
+
+      // Retry now succeeds (would throw "already running" without rollback).
+      await master.startApp(config);
+      expect(master.getAppStatus('rollback-app')).not.toBeNull();
+    });
+
+    test('rolls back a started proxy when a later spawn throws', async () => {
+      const config = makeClusteredConfig({ name: 'rollback-proxy-app', instances: 2 });
+      const m = master as any;
+      const realSpawn = m.processManager.spawnWorker.bind(m.processManager);
+      let calls = 0;
+      m.processManager.spawnWorker = (
+        cfg: AppConfig,
+        wid: number,
+        onMsg: (w: number, msg: unknown) => void,
+        onExit: (w: number, c: number | null, s: string | null) => void,
+      ) => {
+        calls += 1;
+        if (calls === 2) throw new Error('second spawn failed');
+        return realSpawn(cfg, wid, onMsg, onExit);
+      };
+
+      expect(master.startApp(config)).rejects.toThrow('second spawn failed');
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Proxy must have been stopped and the app removed.
+      expect(m.proxies.has('rollback-proxy-app')).toBe(false);
+      expect(master.getAppStatus('rollback-proxy-app')).toBeNull();
+      const stopCalls = ctx.proxyCalls.filter((c) => c.method === 'stop');
+      expect(stopCalls.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

@@ -245,32 +245,6 @@ describe('ProxyCluster', () => {
   });
 
   // -----------------------------------------------------------------------
-  // getWorkerEnv
-  // -----------------------------------------------------------------------
-
-  describe('getWorkerEnv', () => {
-    test('returns BUNPILOT_PORT based on workerId', () => {
-      const env = proxy.getWorkerEnv(0, 3000);
-      expect(env.BUNPILOT_PORT).toBe(String(INTERNAL_PORT_BASE + 0));
-    });
-
-    test('returns BUNPILOT_REUSE_PORT as 0', () => {
-      const env = proxy.getWorkerEnv(0, 3000);
-      expect(env.BUNPILOT_REUSE_PORT).toBe('0');
-    });
-
-    test('different workerIds get different ports', () => {
-      const env0 = proxy.getWorkerEnv(0, 3000);
-      const env1 = proxy.getWorkerEnv(1, 3000);
-      const env2 = proxy.getWorkerEnv(2, 3000);
-
-      expect(env0.BUNPILOT_PORT).toBe(String(INTERNAL_PORT_BASE));
-      expect(env1.BUNPILOT_PORT).toBe(String(INTERNAL_PORT_BASE + 1));
-      expect(env2.BUNPILOT_PORT).toBe(String(INTERNAL_PORT_BASE + 2));
-    });
-  });
-
-  // -----------------------------------------------------------------------
   // stop
   // -----------------------------------------------------------------------
 
@@ -362,11 +336,6 @@ describe('ProxyCluster', () => {
 
       proxy.removeWorker(5);
       expect(getInternals(proxy).workers.get(5)!.alive).toBe(false);
-    });
-
-    test('getWorkerEnv returns correct port for replacement workers', () => {
-      const env = proxy.getWorkerEnv(5, 3000);
-      expect(env.BUNPILOT_PORT).toBe(String(INTERNAL_PORT_BASE + 5));
     });
   });
 

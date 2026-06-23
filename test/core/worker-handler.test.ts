@@ -277,20 +277,18 @@ describe('WorkerHandler', () => {
       expect(worker.exitCode).toBe(0);
     });
 
-    test('attempts transition to stopped when worker state is draining', () => {
+    test('transitions a draining worker to stopped on exit (M3)', () => {
       const worker = makeWorker(1, 'draining');
       const managed = makeManagedApp([worker]);
       const onRestart = () => {};
 
       handler.handleExit(managed, 1, 0, null, onRestart);
 
-      // draining -> stopped is not a valid transition in TRANSITIONS map
-      // (draining -> stopping is valid, but draining -> stopped is not).
-      // The handleExit code tries to transition directly to 'stopped',
-      // but transitionWorker silently ignores invalid transitions.
-      // exitCode is still set before the transition attempt.
+      // M3 fix: draining steps through stopping -> stopped rather than getting
+      // stuck in 'draining'. It must NOT be classified as a crash.
       expect(worker.exitCode).toBe(0);
-      expect(worker.state).toBe('draining');
+      expect(worker.state).toBe('stopped');
+      expect(worker.consecutiveCrashes).toBe(0);
     });
 
     test('transitions to crashed on unexpected exit from online', () => {
@@ -490,6 +488,44 @@ describe('WorkerHandler', () => {
       const managed = makeManagedApp([]);
       await handler.stopAllWorkers(managed);
       expect(managed.spawned.size).toBe(0);
+    });
+
+    test('killing a starting worker mid-shutdown is not counted as a crash (H4)', async () => {
+      const worker = makeWorker(1, 'starting');
+      const managed = makeManagedApp([worker]);
+      managed.spawned.set(1, { proc: {} as any, pid: 1001, stdout: {} as any, stderr: {} as any });
+
+      const restarts: number[] = [];
+      // Simulate the process exiting *during* the kill: handleExit fires while
+      // stopAllWorkers is awaiting killWorker.
+      (pm as any).killWorker = async () => {
+        handler.handleExit(managed, 1, null, 'SIGTERM', (_m, w) => restarts.push(w.id));
+        return 'exited' as const;
+      };
+
+      await handler.stopAllWorkers(managed);
+
+      // H4: must end 'stopped' with clean crash accounting (before the fix the
+      // mid-kill exit was misclassified as a crash, bumping consecutiveCrashes).
+      expect(worker.state).toBe('stopped');
+      expect(worker.consecutiveCrashes).toBe(0);
+      expect(restarts).toHaveLength(0);
+    });
+
+    test('killing a spawning worker mid-shutdown is not counted as a crash (H4)', async () => {
+      const worker = makeWorker(1, 'spawning');
+      const managed = makeManagedApp([worker]);
+      managed.spawned.set(1, { proc: {} as any, pid: 1001, stdout: {} as any, stderr: {} as any });
+
+      (pm as any).killWorker = async () => {
+        handler.handleExit(managed, 1, 1, null, () => {});
+        return 'exited' as const;
+      };
+
+      await handler.stopAllWorkers(managed);
+
+      expect(worker.state).toBe('stopped');
+      expect(worker.consecutiveCrashes).toBe(0);
     });
   });
 

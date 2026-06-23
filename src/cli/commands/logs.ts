@@ -54,8 +54,13 @@ export async function logsCommand(
   // ---- Follow mode (--follow / -f) ----
   if (flags.follow || flags.f) {
     let lastSeenLine = logLines.length > 0 ? logLines[logLines.length - 1] : null;
+    // Guard against overlapping polls: if the daemon is slow, a fixed interval
+    // would stack concurrent requests (and race on lastSeenLine).
+    let polling = false;
 
     const poll = setInterval(async () => {
+      if (polling) return;
+      polling = true;
       try {
         const newRes = await sendCommand(
           'logs',
@@ -99,6 +104,8 @@ export async function logsCommand(
         lastSeenLine = newLines[newLines.length - 1];
       } catch {
         // Connection error during polling — silently retry next interval
+      } finally {
+        polling = false;
       }
     }, FOLLOW_POLL_INTERVAL);
 

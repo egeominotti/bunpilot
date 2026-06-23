@@ -12,7 +12,7 @@ import { ControlServer } from '../control/server';
 import { createCommandHandlers, type CommandContext } from '../control/handlers';
 import { setupSignalHandlers } from '../core/signals';
 import { loadConfig } from '../config/loader';
-import { ensureBunpilotHome, SOCKET_PATH, LOGS_DIR } from '../constants';
+import { ensureBunpilotHome, SOCKET_PATH, LOGS_DIR, DEFAULT_METRICS } from '../constants';
 import { mkdirSync, readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AppConfig, AppStatus } from '../config/types';
@@ -36,8 +36,14 @@ async function main(): Promise<void> {
   const store = new SqliteStore();
   const master = new MasterOrchestrator();
 
+  // Daemon-wide metrics port (sourced from the shared default, not hardcoded).
+  const metricsPort = DEFAULT_METRICS.httpPort ?? 9_615;
+
   // -- Pending configs: apps started via CLI are stored here -----------------
   const pendingConfigs = new Map<string, AppConfig>();
+
+  /** Snapshot of daemon state shared by status/dump endpoints. */
+  const snapshot = () => ({ apps: master.listApps(), uptime: process.uptime(), pid: process.pid });
 
   // -- Build CommandContext adapter ------------------------------------------
   const ctx: CommandContext = {
@@ -75,10 +81,7 @@ async function main(): Promise<void> {
       return readLogLines(name, lines ?? 50);
     },
 
-    dumpState: () => {
-      const apps = master.listApps();
-      return { apps, uptime: process.uptime(), pid: process.pid };
-    },
+    dumpState: () => snapshot(),
 
     shutdown: async () => {
       await master.shutdown('daemon-kill');
@@ -115,10 +118,10 @@ async function main(): Promise<void> {
       if (appName) return apps.filter((a) => a.name === appName);
       return apps;
     },
-    getStatus: () => ({ apps: master.listApps(), uptime: process.uptime(), pid: process.pid }),
+    getStatus: () => snapshot(),
   };
 
-  const metricsServer = new MetricsHttpServer(9615, metricsProvider);
+  const metricsServer = new MetricsHttpServer(metricsPort, metricsProvider);
 
   // -- Register cleanup on master shutdown -----------------------------------
   master.onShutdown(() => {
@@ -150,7 +153,7 @@ async function main(): Promise<void> {
 
   // -- Start metrics HTTP server ---------------------------------------------
   metricsServer.start();
-  console.log('[daemon] metrics server listening on http://127.0.0.1:9615');
+  console.log(`[daemon] metrics server listening on http://127.0.0.1:${metricsPort}`);
 
   // -- Load config if passed as argument -------------------------------------
   const configPath = process.argv[2];

@@ -31,6 +31,8 @@ interface WorkerSlot {
 interface ConnState {
   upstream: unknown;
   pending: Buffer[];
+  /** Set once the public client socket closes/errors. */
+  clientClosed: boolean;
 }
 
 /** Minimal interface for calling write/end on Bun sockets via cast. */
@@ -82,7 +84,7 @@ export class ProxyCluster {
       port: publicPort,
       socket: {
         open: (socket) => {
-          socket.data = { upstream: null, pending: [] };
+          socket.data = { upstream: null, pending: [], clientClosed: false };
           this.handleConnection(socket as unknown as WritableEnd & { data: ConnState });
         },
         data: (socket, data) => {
@@ -94,29 +96,13 @@ export class ProxyCluster {
           }
         },
         close: (socket) => {
-          if (socket.data?.upstream) {
-            (socket.data.upstream as WritableEnd).end();
-          }
+          this.onClientGone(socket.data);
         },
         error: (socket) => {
-          if (socket.data?.upstream) {
-            (socket.data.upstream as WritableEnd).end();
-          }
+          this.onClientGone(socket.data);
         },
       },
     });
-  }
-
-  /**
-   * Returns the env vars for a given worker.
-   *
-   * Each worker binds to its own internal port so the proxy can reach it.
-   */
-  getWorkerEnv(workerId: number, _port: number): Record<string, string> {
-    return {
-      BUNPILOT_PORT: String(INTERNAL_PORT_BASE + workerId),
-      BUNPILOT_REUSE_PORT: '0',
-    };
   }
 
   /** Mark worker as alive so the proxy starts sending it traffic. */
@@ -189,6 +175,22 @@ export class ProxyCluster {
   }
 
   /**
+   * Record that the public client socket is gone and tear down its upstream.
+   *
+   * H5: the client can disconnect *before* the async `Bun.connect` upstream
+   * opens. Marking `clientClosed` lets the upstream `open` handler immediately
+   * release the just-connected worker socket instead of leaking a half-open FD.
+   */
+  private onClientGone(state: ConnState | undefined): void {
+    if (!state) return;
+    state.clientClosed = true;
+    if (state.upstream) {
+      (state.upstream as WritableEnd).end();
+      state.upstream = null;
+    }
+  }
+
+  /**
    * Handle a newly accepted public connection by piping it to an internal
    * worker port.
    */
@@ -204,6 +206,13 @@ export class ProxyCluster {
       port: target.port,
       socket: {
         open: (upstream) => {
+          // H5: the client may have closed while we were connecting upstream.
+          // If so, drop the upstream immediately — don't adopt or flush to it.
+          if (clientSocket.data.clientClosed) {
+            (upstream as unknown as WritableEnd).end();
+            return;
+          }
+
           clientSocket.data.upstream = upstream;
 
           // Flush any data that arrived before upstream was ready.

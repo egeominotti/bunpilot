@@ -331,6 +331,65 @@ describe('ReloadHandler', () => {
       expect(drained).toBe(true);
     });
 
+    test('aborts and does NOT drain old workers when a replacement crashes mid-wait (H3)', async () => {
+      const w1 = makeWorker(1);
+      const workers = [w1];
+      const config = makeConfig({ readyTimeout: 2_000 });
+
+      let drained = false;
+
+      const ctx: ReloadContext = {
+        config,
+        workers,
+        processManager: {} as ProcessManager,
+        lifecycle: new WorkerLifecycle(),
+        spawnAndTrack: (_cfg, workerId) => {
+          const replacement = makeWorker(workerId + 100, 'starting');
+          // The replacement dies before ever coming online.
+          setTimeout(() => {
+            replacement.state = 'crashed';
+          }, 40);
+          return replacement;
+        },
+        drainAndStop: async (worker) => {
+          drained = true;
+          worker.state = 'stopped';
+        },
+      };
+
+      await expect(reloadHandler.rollingRestart(ctx)).rejects.toThrow('reload aborted');
+
+      // Old worker must be untouched — capacity preserved.
+      expect(drained).toBe(false);
+      expect(w1.state).toBe('online');
+    });
+
+    test('online-then-crash is fine: replacement came up so the old worker drains (H3)', async () => {
+      const w1 = makeWorker(1);
+      const workers = [w1];
+      const config = makeConfig({ readyTimeout: 500 });
+
+      let drained = false;
+
+      const ctx: ReloadContext = {
+        config,
+        workers,
+        processManager: {} as ProcessManager,
+        lifecycle: new WorkerLifecycle(),
+        spawnAndTrack: (_cfg, workerId) => {
+          // Already online -> waitForReady resolves before any later crash.
+          return makeWorker(workerId + 100, 'online');
+        },
+        drainAndStop: async (worker) => {
+          drained = true;
+          worker.state = 'stopped';
+        },
+      };
+
+      await reloadHandler.rollingRestart(ctx);
+      expect(drained).toBe(true);
+    });
+
     test('drains all workers in a batch concurrently', async () => {
       const w1 = makeWorker(1);
       const w2 = makeWorker(2);
@@ -366,11 +425,12 @@ describe('ReloadHandler', () => {
 
       await reloadHandler.rollingRestart(ctx);
 
-      // Both drains should have started at roughly the same time (concurrent via Promise.all)
+      // Both drains should have started at roughly the same time (concurrent via Promise.all).
       expect(drainStarts.length).toBe(2);
       const timeDiff = Math.abs(drainStarts[0] - drainStarts[1]);
-      // They should start within a few ms of each other (concurrent), not 50ms apart (sequential)
-      expect(timeDiff).toBeLessThan(30);
+      // Concurrent starts are dispatched in the same tick; sequential would be
+      // ~50ms apart (the drain duration). Stay well under that, with CI slack.
+      expect(timeDiff).toBeLessThan(40);
     });
   });
 });
