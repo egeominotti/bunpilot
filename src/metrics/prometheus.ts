@@ -3,11 +3,25 @@
 // ---------------------------------------------------------------------------
 
 import type { WorkerState } from '../config/types';
-import type { WorkerMetricsData } from './aggregator';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/** Latest per-worker metrics sample fed into the exposition format. */
+export interface WorkerMetricsData {
+  memory: {
+    rss: number;
+    heapTotal: number;
+    heapUsed: number;
+    external: number;
+  };
+  cpuPercent: number;
+  eventLoopLag?: number;
+  activeHandles?: number;
+  timestamp: number;
+  custom?: Record<string, number>;
+}
 
 export interface AppMetricsInput {
   appName: string;

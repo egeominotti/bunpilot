@@ -6,6 +6,8 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { HealthChecker, type UnhealthyCallback } from '../../src/health/checker';
 import type { AppConfig } from '../../src/config/types';
 import { INTERNAL_PORT_BASE, HEARTBEAT_INTERVAL, HEARTBEAT_MISS_THRESHOLD } from '../../src/constants';
+import { detectStrategy } from '../../src/cluster/platform';
+import { ProcessManager } from '../../src/core/process-manager';
 import type { Server } from 'bun';
 
 // ---------------------------------------------------------------------------
@@ -215,6 +217,101 @@ describe('HealthChecker', () => {
       const config = makeConfig();
       // No clustering config => strategy defaults to 'auto' => INTERNAL_PORT_BASE + workerId
       expect(checker.getWorkerPort(7, config)).toBe(INTERNAL_PORT_BASE + 7);
+    });
+
+    // --- C2: clustered apps must resolve the port the same way buildEnv does ---
+
+    test('clustered + reusePort returns config.port for every worker (C2)', () => {
+      const config = makeConfig({
+        port: 8080,
+        instances: 4,
+        clustering: {
+          enabled: true,
+          strategy: 'reusePort',
+          rollingRestart: { batchSize: 1, batchDelay: 1_000 },
+        },
+      });
+      expect(checker.getWorkerPort(0, config)).toBe(8080);
+      expect(checker.getWorkerPort(3, config)).toBe(8080);
+    });
+
+    test('clustered + proxy returns the internal per-worker port (C2)', () => {
+      const config = makeConfig({
+        port: 8080,
+        instances: 4,
+        clustering: {
+          enabled: true,
+          strategy: 'proxy',
+          rollingRestart: { batchSize: 1, batchDelay: 1_000 },
+        },
+      });
+      expect(checker.getWorkerPort(0, config)).toBe(INTERNAL_PORT_BASE + 0);
+      expect(checker.getWorkerPort(2, config)).toBe(INTERNAL_PORT_BASE + 2);
+    });
+
+    test('clustered + auto resolves the port exactly like buildEnv/detectStrategy (C2)', () => {
+      const config = makeConfig({
+        port: 8080,
+        instances: 4,
+        clustering: {
+          enabled: true,
+          strategy: 'auto',
+          rollingRestart: { batchSize: 1, batchDelay: 1_000 },
+        },
+      });
+      // On Linux 'auto' => reusePort => config.port; elsewhere => proxy internal port.
+      const expected = detectStrategy('auto') === 'reusePort' ? 8080 : INTERNAL_PORT_BASE + 0;
+      expect(checker.getWorkerPort(0, config)).toBe(expected);
+    });
+
+    test('getWorkerPort agrees with the port buildEnv binds for every branch (C2.1)', () => {
+      const pm = new ProcessManager();
+      // buildEnv is private; reach it to compare the actually-bound port.
+      const buildEnv = (cfg: AppConfig, id: number) =>
+        (pm as unknown as { buildEnv(c: AppConfig, i: number): Record<string, string> }).buildEnv(
+          cfg,
+          id,
+        );
+
+      const rr = { batchSize: 1, batchDelay: 0 };
+      const matrix: AppConfig[] = [
+        makeConfig({ instances: 1 }), // not clustered, no port
+        makeConfig({ port: 8080, instances: 1 }), // not clustered, with port
+        makeConfig({ port: 8080, instances: 4, clustering: { enabled: true, strategy: 'reusePort', rollingRestart: rr } }),
+        makeConfig({ port: 8080, instances: 4, clustering: { enabled: true, strategy: 'proxy', rollingRestart: rr } }),
+        makeConfig({ instances: 4, clustering: { enabled: true, strategy: 'proxy', rollingRestart: rr } }), // clustered, NO port
+      ];
+
+      for (const cfg of matrix) {
+        for (const id of [0, 2]) {
+          const env = buildEnv(cfg, id);
+          const bound = env.BUNPILOT_PORT !== undefined ? Number(env.BUNPILOT_PORT) : undefined;
+          const probed = checker.getWorkerPort(id, cfg);
+          if (bound !== undefined) {
+            // When a port IS bound, the checker must probe exactly that port.
+            expect(probed).toBe(bound);
+          } else {
+            // No bound port (degenerate clustered-without-port) -> internal fallback.
+            expect(probed).toBe(INTERNAL_PORT_BASE + id);
+          }
+        }
+      }
+    });
+
+    test('buildEnv emits REUSE_PORT=0 and no port for clustered reusePort without a port (C2.1 edge)', () => {
+      const pm = new ProcessManager();
+      const env = (
+        pm as unknown as { buildEnv(c: AppConfig, i: number): Record<string, string> }
+      ).buildEnv(
+        makeConfig({
+          instances: 4,
+          clustering: { enabled: true, strategy: 'reusePort', rollingRestart: { batchSize: 1, batchDelay: 0 } },
+        }),
+        0,
+      );
+      // Degenerate config: no port to share -> no BUNPILOT_PORT, reuse flag off.
+      expect(env.BUNPILOT_PORT).toBeUndefined();
+      expect(env.BUNPILOT_REUSE_PORT).toBe('0');
     });
   });
 
@@ -678,6 +775,37 @@ describe('HealthChecker', () => {
       checker.startHeartbeatMonitor(1, () => {});
       // Immediately after starting, the heartbeat should not be stale
       expect(checker.isHeartbeatStale(1)).toBe(false);
+    });
+
+    test('staleness is measured from monitor-start until a real heartbeat (L7)', () => {
+      const originalNow = Date.now;
+      const base = originalNow();
+      let now = base;
+      Date.now = () => now;
+
+      try {
+        checker.startHeartbeatMonitor(1, () => {});
+
+        // No genuine heartbeat yet: grace period runs from monitor start.
+        now = base + HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD - 1_000;
+        expect(checker.isHeartbeatStale(1)).toBe(false);
+
+        // A genuine heartbeat resets the clock to "now".
+        now = base + 20_000;
+        checker.onHeartbeat(1);
+
+        // Just past the old monitor-start threshold, but the real heartbeat
+        // is recent, so it must NOT be stale.
+        now = base + HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD + 1_000;
+        expect(checker.isHeartbeatStale(1)).toBe(false);
+
+        // Far enough past the real heartbeat -> stale.
+        now = base + 20_000 + HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD + 1_000;
+        expect(checker.isHeartbeatStale(1)).toBe(true);
+      } finally {
+        checker.stopHeartbeatMonitor(1);
+        Date.now = originalNow;
+      }
     });
 
     test('does not fire onStale immediately', async () => {

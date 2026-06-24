@@ -28,6 +28,30 @@ function isControlResponse(msg: object): msg is ControlResponse {
   return 'ok' in msg && typeof (msg as ControlResponse).ok === 'boolean';
 }
 
+/**
+ * Build a stateful NDJSON line framer over a socket's `data` chunks.
+ *
+ * Buffers partial input and, on each call, returns the decoded messages for
+ * any *complete* lines received so far (leaving a trailing partial line
+ * buffered). Shared by `send` and `sendStream` so the buffering logic lives in
+ * exactly one place.
+ */
+function createLineFramer(): (raw: string | Uint8Array) => object[] {
+  let buffer = '';
+  const decoder = new TextDecoder();
+
+  return (raw) => {
+    buffer += typeof raw === 'string' ? raw : decoder.decode(raw);
+
+    const lastNewline = buffer.lastIndexOf('\n');
+    if (lastNewline === -1) return [];
+
+    const complete = buffer.slice(0, lastNewline + 1);
+    buffer = buffer.slice(lastNewline + 1);
+    return decodeMessages(complete);
+  };
+}
+
 // ---------------------------------------------------------------------------
 // ControlClient
 // ---------------------------------------------------------------------------
@@ -59,7 +83,7 @@ export class ControlClient {
     const payload = encodeMessage(req);
 
     return new Promise<ControlResponse>((resolve, reject) => {
-      let buffer = '';
+      const frame = createLineFramer();
       let settled = false;
       let socket: ReturnType<typeof Bun.connect> extends Promise<infer S> ? S : never;
 
@@ -94,16 +118,7 @@ export class ControlClient {
           },
 
           data(s, raw) {
-            buffer += typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
-
-            // Only parse complete NDJSON lines (same pattern as sendStream)
-            const lastNewline = buffer.lastIndexOf('\n');
-            if (lastNewline === -1) return;
-
-            const complete = buffer.slice(0, lastNewline + 1);
-            buffer = buffer.slice(lastNewline + 1);
-
-            const messages = decodeMessages(complete);
+            const messages = frame(raw);
             if (messages.length === 0) return;
 
             // We only expect one response per send()
@@ -150,7 +165,7 @@ export class ControlClient {
     const payload = encodeMessage(req);
 
     return new Promise<void>((resolve, reject) => {
-      let buffer = '';
+      const frame = createLineFramer();
       let settled = false;
 
       const settle = (fn: () => void) => {
@@ -170,15 +185,7 @@ export class ControlClient {
           },
 
           data(_s, raw) {
-            buffer += typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
-
-            const lastNewline = buffer.lastIndexOf('\n');
-            if (lastNewline === -1) return;
-
-            const complete = buffer.slice(0, lastNewline + 1);
-            buffer = buffer.slice(lastNewline + 1);
-
-            const messages = decodeMessages(complete);
+            const messages = frame(raw);
             for (const msg of messages) {
               if (isStreamChunk(msg)) {
                 onChunk(msg);

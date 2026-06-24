@@ -9,6 +9,7 @@
 
 import type { AppConfig } from '../config/types';
 import { INTERNAL_PORT_BASE, HEARTBEAT_INTERVAL, HEARTBEAT_MISS_THRESHOLD } from '../constants';
+import { resolveWorkerPort } from '../cluster/policy';
 
 // ---------------------------------------------------------------------------
 // Callback types
@@ -48,8 +49,11 @@ export class HealthChecker {
   /** Periodic HTTP check timers. */
   private timers: Map<number, Timer> = new Map();
 
-  /** Timestamps of the most recent heartbeat per worker. */
+  /** Timestamps of the most recent *genuine* heartbeat per worker. */
   private lastHeartbeat: Map<number, number> = new Map();
+
+  /** When heartbeat monitoring began per worker (the grace-period baseline). */
+  private monitorStartedAt: Map<number, number> = new Map();
 
   /** Periodic heartbeat-monitor timers. */
   private heartbeatTimers: Map<number, Timer> = new Map();
@@ -84,18 +88,16 @@ export class HealthChecker {
   /**
    * Determine which port to probe for a given worker.
    *
-   * - **reusePort** strategy: every worker binds to the public `config.port`.
-   * - **proxy** strategy: each worker binds to `INTERNAL_PORT_BASE + workerId`.
+   * Delegates to the shared `resolveWorkerPort` policy so it always agrees with
+   * the port the worker actually bound (`ProcessManager.buildEnv`). The previous
+   * implementation only special-cased the literal `'reusePort'` and missed
+   * `'auto'` (which on Linux resolves to reusePort and binds `config.port`),
+   * causing the checker to probe a dead internal port and restart-loop healthy
+   * workers. When no port is bound (degenerate clustered-without-port case)
+   * there is nothing meaningful to probe, so we fall back to the internal port.
    */
   getWorkerPort(workerId: number, config: AppConfig): number {
-    const strategy = config.clustering?.strategy ?? 'auto';
-
-    if (strategy === 'reusePort') {
-      return config.port ?? INTERNAL_PORT_BASE + workerId;
-    }
-
-    // 'proxy' or 'auto' (auto resolves to proxy on non-Linux in practice)
-    return INTERNAL_PORT_BASE + workerId;
+    return resolveWorkerPort(config, workerId) ?? INTERNAL_PORT_BASE + workerId;
   }
 
   // -----------------------------------------------------------------------
@@ -158,7 +160,9 @@ export class HealthChecker {
    * more consecutive heartbeat windows (each window = `HEARTBEAT_INTERVAL` ms).
    */
   isHeartbeatStale(workerId: number): boolean {
-    const last = this.lastHeartbeat.get(workerId);
+    // Fall back to the monitor-start baseline when no genuine heartbeat has
+    // arrived yet, so a worker that never beats is still measured from start.
+    const last = this.lastHeartbeat.get(workerId) ?? this.monitorStartedAt.get(workerId);
     if (last === undefined) return false;
 
     const elapsed = Date.now() - last;
@@ -172,8 +176,9 @@ export class HealthChecker {
   startHeartbeatMonitor(workerId: number, onStale: (workerId: number) => void): void {
     this.stopHeartbeatMonitor(workerId);
 
-    // Seed the last-heartbeat so the first check has a baseline.
-    this.lastHeartbeat.set(workerId, Date.now());
+    // Record the monitor-start baseline (not a fake heartbeat) so staleness is
+    // measured from start until the first genuine heartbeat arrives.
+    this.monitorStartedAt.set(workerId, Date.now());
 
     const timer = setInterval(() => {
       if (this.isHeartbeatStale(workerId)) {
@@ -192,6 +197,7 @@ export class HealthChecker {
       this.heartbeatTimers.delete(workerId);
     }
     this.lastHeartbeat.delete(workerId);
+    this.monitorStartedAt.delete(workerId);
   }
 
   // -----------------------------------------------------------------------
@@ -233,6 +239,11 @@ export class HealthChecker {
 
     try {
       const res = await fetch(url, { signal: controller.signal });
+
+      // M2: we only care about the status — drain the body so the keep-alive
+      // connection is released immediately instead of lingering until GC. The
+      // no-op catch keeps a cancel rejection from flipping a healthy check.
+      await res.body?.cancel().catch(() => {});
 
       if (res.ok) {
         // Success – reset the failure counter.

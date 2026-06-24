@@ -302,4 +302,63 @@ describe('setupSignalHandlers', () => {
 
     process.exit = originalExit;
   });
+
+  // -------------------------------------------------------------------------
+  // L10: shutdown still exits (cleanly) when onShutdown rejects
+  // -------------------------------------------------------------------------
+
+  test('still exits with code 0 and logs when onShutdown rejects (L10)', async () => {
+    const originalExit = process.exit;
+    const originalError = console.error;
+    let exitCode: number | undefined;
+    let loggedError = false;
+
+    process.exit = ((code?: number) => {
+      exitCode = code ?? 0;
+    }) as typeof process.exit;
+    console.error = () => {
+      loggedError = true;
+    };
+
+    try {
+      const callbacks: SignalCallbacks = {
+        onShutdown: async () => {
+          throw new Error('cleanup blew up');
+        },
+        onReload: () => {},
+      };
+
+      setupSignalHandlers(callbacks);
+
+      const sigtermHandler = addedListeners.get('SIGTERM')![0];
+      sigtermHandler('SIGTERM');
+
+      // Wait for the rejected promise's .catch().finally() chain to settle.
+      await new Promise((r) => setTimeout(r, 10));
+
+      // The reject branch must log and still exit 0 (finally), not hang.
+      expect(loggedError).toBe(true);
+      expect(exitCode).toBe(0);
+    } finally {
+      process.exit = originalExit;
+      console.error = originalError;
+    }
+  });
+
+  test('unhandledRejection handler logs without throwing (L10)', () => {
+    const originalError = console.error;
+    let logged = false;
+    console.error = () => {
+      logged = true;
+    };
+
+    try {
+      setupSignalHandlers({ onShutdown: () => {}, onReload: () => {} });
+      const handler = addedListeners.get('unhandledRejection')![0];
+      expect(() => handler(new Error('boom'))).not.toThrow();
+      expect(logged).toBe(true);
+    } finally {
+      console.error = originalError;
+    }
+  });
 });

@@ -4,8 +4,9 @@
 
 import type { Subprocess } from 'bun';
 import type { AppConfig, WorkerMessage } from '../config/types';
-import { INTERNAL_ENV_KEYS, INTERNAL_PORT_BASE } from '../constants';
-import { detectStrategy } from '../cluster/platform';
+import { INTERNAL_ENV_KEYS } from '../constants';
+import { bindsWithReusePort, resolveWorkerPort } from '../cluster/policy';
+import { pollUntil } from './poll';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -132,30 +133,14 @@ export class ProcessManager {
     base['BUNPILOT_APP_NAME'] = config.name;
     base['BUNPILOT_INSTANCES'] = String(config.instances);
 
-    // Determine clustering env based on strategy.
-    const clusteringEnabled = config.clustering?.enabled === true;
-    const instances = config.instances;
-    const isClustered = clusteringEnabled && instances !== 1;
-
-    if (isClustered && config.port !== undefined) {
-      const strategy = detectStrategy(config.clustering?.strategy ?? 'auto');
-
-      if (strategy === 'reusePort') {
-        // Linux: all workers bind to the same public port with SO_REUSEPORT.
-        base['BUNPILOT_PORT'] = String(config.port);
-        base['BUNPILOT_REUSE_PORT'] = '1';
-      } else {
-        // proxy: each worker binds to its own internal port.
-        base['BUNPILOT_PORT'] = String(INTERNAL_PORT_BASE + workerId);
-        base['BUNPILOT_REUSE_PORT'] = '0';
-      }
-    } else {
-      // Not clustered or no port configured – use config.port directly.
-      if (config.port !== undefined) {
-        base['BUNPILOT_PORT'] = String(config.port);
-      }
-      base['BUNPILOT_REUSE_PORT'] = '0';
+    // Port + reuse-port flag come from the shared policy so the health checker
+    // (which probes the same port) can never disagree about what we bound.
+    const port = resolveWorkerPort(config, workerId);
+    if (port !== undefined) {
+      base['BUNPILOT_PORT'] = String(port);
     }
+    base['BUNPILOT_REUSE_PORT'] =
+      bindsWithReusePort(config) && config.port !== undefined ? '1' : '0';
 
     return base;
   }
@@ -173,23 +158,6 @@ export class ProcessManager {
 
   /** Poll-based wait for a pid to disappear. */
   private waitForExit(pid: number, timeout: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      const start = Date.now();
-      const interval = 100; // ms
-
-      const check = () => {
-        if (!this.isRunning(pid)) {
-          resolve(true);
-          return;
-        }
-        if (Date.now() - start >= timeout) {
-          resolve(false);
-          return;
-        }
-        setTimeout(check, interval);
-      };
-
-      check();
-    });
+    return pollUntil(() => !this.isRunning(pid), timeout);
   }
 }
