@@ -67,7 +67,7 @@ jobs:
         run: bun run test:coverage
       - name: Upload coverage
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage/
@@ -96,7 +96,7 @@ jobs:
         run: |
           expected_version=$(node -p "require('./package.json').version")
           test "$(./bunpilot --version)" = "bunpilot v${expected_version}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bunpilot-${{ runner.os }}-${{ runner.arch }}
           path: bunpilot

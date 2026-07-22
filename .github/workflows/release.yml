@@ -72,7 +72,7 @@ jobs:
           cp dist/bunpilot package/bunpilot
           cp README.md LICENSE package/
           tar -czf "bunpilot-${GITHUB_REF_NAME}-${{ matrix.platform }}.tar.gz" -C package .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.platform }}
           path: bunpilot-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz
