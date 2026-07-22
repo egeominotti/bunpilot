@@ -9,16 +9,19 @@
 // piping, upstream-connect-failure cleanup, and the H5 early-close teardown.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import type { Server } from 'bun';
 import { ProxyCluster } from '../../src/cluster/proxy';
 import { INTERNAL_PORT_BASE } from '../../src/constants';
-import type { Server } from 'bun';
 
 const servers: Server[] = [];
 const proxies: ProxyCluster[] = [];
 
 /** Start a backend on the internal port for `workerId` returning `body`. */
-function startBackend(workerId: number, handler: (req: Request) => Response | Promise<Response>): void {
+function startBackend(
+  workerId: number,
+  handler: (req: Request) => Response | Promise<Response>,
+): void {
   const srv = Bun.serve({ port: INTERNAL_PORT_BASE + workerId, fetch: handler });
   servers.push(srv);
 }

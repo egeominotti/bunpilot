@@ -2,31 +2,29 @@
 // bunpilot – Config Module Barrel Export
 // ---------------------------------------------------------------------------
 
-export { loadConfig, loadFromCLI } from './loader';
 export type { CLIArgs } from './loader';
-
-export { validateConfig, validateApp, resolveInstances } from './validator';
-
+export { loadConfig, loadFromCLI } from './loader';
 export type {
   AppConfig,
+  AppStatus,
   BackoffConfig,
+  BackoffState,
   BunpilotConfig,
   ClusteringConfig,
   ClusterStrategy,
-  DaemonConfig,
-  HealthCheckConfig,
-  LogsConfig,
-  MetricsConfig,
-  WorkerState,
-  WorkerInfo,
-  WorkerMessage,
-  MasterMessage,
   ControlRequest,
   ControlResponse,
   ControlStreamChunk,
-  AppStatus,
-  BackoffState,
-  MemoryMetrics,
   CpuMetrics,
+  DaemonConfig,
+  HealthCheckConfig,
+  LogsConfig,
+  MasterMessage,
+  MemoryMetrics,
+  MetricsConfig,
+  WorkerInfo,
+  WorkerMessage,
   WorkerMetricsPayload,
+  WorkerState,
 } from './types';
+export { resolveInstances, validateApp, validateConfig } from './validator';

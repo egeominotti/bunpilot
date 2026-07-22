@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // ---------------------------------------------------------------------------
 // bunpilot – Daemon Boot: entry point spawned by daemonize()
 // ---------------------------------------------------------------------------
@@ -7,37 +8,60 @@
 // It wires up: MasterOrchestrator + ControlServer + SignalHandlers.
 // ---------------------------------------------------------------------------
 
-import { MasterOrchestrator } from '../core/master';
-import { ControlServer } from '../control/server';
-import { createCommandHandlers, type CommandContext } from '../control/handlers';
-import { setupSignalHandlers } from '../core/signals';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { loadConfig } from '../config/loader';
-import { ensureBunpilotHome, SOCKET_PATH, LOGS_DIR, DEFAULT_METRICS } from '../constants';
-import { mkdirSync, readdirSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { AppConfig, AppStatus } from '../config/types';
+import type { AppConfig, AppStatus, BunpilotConfig } from '../config/types';
+import { validateApp } from '../config/validator';
+import { DEFAULT_METRICS, ensureBunpilotHome, LOGS_DIR, PID_FILE, SOCKET_PATH } from '../constants';
+import { type CommandContext, createCommandHandlers } from '../control/handlers';
 import { createErrorResponse } from '../control/protocol';
-import { SqliteStore } from '../store/sqlite';
-import { MetricsHttpServer, type MetricsDataProvider } from '../metrics/http-server';
+import { ControlServer } from '../control/server';
+import { MasterOrchestrator } from '../core/master';
+import { setupSignalHandlers } from '../core/signals';
+import { readLogLines } from '../logs/reader';
+import { type MetricsDataProvider, MetricsHttpServer } from '../metrics/http-server';
 import {
-  formatPrometheus,
   type AppMetricsInput,
   type AppWorkerMetrics,
+  formatPrometheus,
 } from '../metrics/prometheus';
+import { SqliteStore } from '../store/sqlite';
+import { removePidFile, writePidFile } from './pid';
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-async function main(): Promise<void> {
+/** Reject listener collisions for apps submitted after the daemon has started. */
+export function assertAppCompatibleWithDaemon(config: AppConfig, metricsPort: number): void {
+  if (config.port === metricsPort) {
+    throw new Error(
+      `App public port ${config.port} conflicts with daemon metrics port ${metricsPort}`,
+    );
+  }
+  if (config.metrics?.enabled && config.metrics.httpPort !== metricsPort) {
+    throw new Error(
+      `App metrics port ${config.metrics.httpPort} does not match daemon port ${metricsPort}; restart the daemon with this config`,
+    );
+  }
+}
+
+export async function bootDaemon(configPath?: string): Promise<void> {
   ensureBunpilotHome();
   mkdirSync(LOGS_DIR, { recursive: true });
 
-  const store = new SqliteStore();
-  const master = new MasterOrchestrator();
+  let loadedConfig: BunpilotConfig | null = null;
+  if (configPath) {
+    loadedConfig = await loadConfig(configPath);
+  }
 
-  // Daemon-wide metrics port (sourced from the shared default, not hardcoded).
-  const metricsPort = DEFAULT_METRICS.httpPort ?? 9_615;
+  const store = new SqliteStore();
+  const configuredMetrics = loadedConfig?.apps.find((app) => app.metrics?.enabled)?.metrics;
+  const metricsPort = configuredMetrics?.httpPort ?? DEFAULT_METRICS.httpPort ?? 9_615;
+  const master = new MasterOrchestrator([metricsPort]);
+  const socketPath = resolve(loadedConfig?.daemon?.socketFile ?? SOCKET_PATH);
+  const pidFile = resolve(loadedConfig?.daemon?.pidFile ?? PID_FILE);
 
   // -- Pending configs: apps started via CLI are stored here -----------------
   const pendingConfigs = new Map<string, AppConfig>();
@@ -58,19 +82,28 @@ async function main(): Promise<void> {
       const config = pendingConfigs.get(name);
       if (!config) throw new Error(`No config found for app "${name}"`);
       store.saveApp(name, config);
-      await master.startApp(config);
-      pendingConfigs.delete(name);
+      try {
+        await master.startApp(config);
+        store.updateAppStatus(name, 'running');
+        pendingConfigs.delete(name);
+      } catch (error) {
+        store.updateAppStatus(name, 'stopped');
+        throw error;
+      }
     },
 
-    stopApp: (name) => {
+    stopApp: async (name) => {
+      await master.stopApp(name);
       store.updateAppStatus(name, 'stopped');
-      return master.stopApp(name);
     },
-    restartApp: (name) => master.restartApp(name),
+    restartApp: async (name, force) => {
+      await master.restartApp(name, force);
+      store.updateAppStatus(name, 'running');
+    },
     reloadApp: (name) => master.reloadApp(name),
-    deleteApp: (name) => {
+    deleteApp: async (name) => {
+      await master.deleteApp(name);
       store.deleteApp(name);
-      return master.deleteApp(name);
     },
 
     getMetrics: () => {
@@ -78,16 +111,13 @@ async function main(): Promise<void> {
     },
 
     getLogs: (name, lines) => {
-      return readLogLines(name, lines ?? 50);
+      return readLogLines(LOGS_DIR, name, lines ?? 50);
     },
 
     dumpState: () => snapshot(),
 
     shutdown: async () => {
       await master.shutdown('daemon-kill');
-      controlServer.stop();
-      metricsServer.stop();
-      store.close();
       process.exit(0);
     },
   };
@@ -95,11 +125,19 @@ async function main(): Promise<void> {
   // -- Command handler dispatch ----------------------------------------------
   const handlers = createCommandHandlers(ctx);
 
-  const controlServer = new ControlServer(SOCKET_PATH, async (cmd, args) => {
+  const controlServer = new ControlServer(socketPath, async (cmd, args) => {
     // For 'start', stash the config before the handler calls ctx.startApp
     if (cmd === 'start' && args.config) {
-      const config = args.config as AppConfig;
+      const config = validateApp(args.config);
       const name = (args.name as string) || config.name;
+      if (name !== config.name) {
+        return createErrorResponse('', 'Request name must match config.name');
+      }
+      try {
+        assertAppCompatibleWithDaemon(config, metricsPort);
+      } catch (error) {
+        return createErrorResponse('', error instanceof Error ? error.message : String(error));
+      }
       pendingConfigs.set(name, config);
     }
 
@@ -124,20 +162,30 @@ async function main(): Promise<void> {
   const metricsServer = new MetricsHttpServer(metricsPort, metricsProvider);
 
   // -- Register cleanup on master shutdown -----------------------------------
-  master.onShutdown(() => {
-    controlServer.stop();
-    metricsServer.stop();
-    store.close();
-  });
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    for (const [label, action] of [
+      ['control server', () => controlServer.stop()],
+      ['metrics server', () => metricsServer.stop()],
+      ['store', () => store.close()],
+      ['PID file', () => removePidFile(pidFile, process.pid)],
+    ] as const) {
+      try {
+        action();
+      } catch (error) {
+        console.error(`[daemon] ${label} cleanup failed:`, error);
+      }
+    }
+  };
+  master.onShutdown(cleanup);
 
   // -- Signal handlers -------------------------------------------------------
   setupSignalHandlers({
     onShutdown: async (sig) => {
       console.log(`[daemon] received ${sig}, shutting down...`);
       await master.shutdown(sig);
-      controlServer.stop();
-      metricsServer.stop();
-      store.close();
     },
     onReload: () => {
       console.log('[daemon] received SIGHUP, reloading all apps...');
@@ -149,33 +197,40 @@ async function main(): Promise<void> {
 
   // -- Start control server --------------------------------------------------
   await controlServer.start();
-  console.log(`[daemon] control server listening on ${SOCKET_PATH}`);
+  console.log(`[daemon] control server listening on ${socketPath}`);
 
   // -- Start metrics HTTP server ---------------------------------------------
   metricsServer.start();
   console.log(`[daemon] metrics server listening on http://127.0.0.1:${metricsPort}`);
 
-  // -- Load config if passed as argument -------------------------------------
-  const configPath = process.argv[2];
-  if (configPath) {
+  // -- Restore desired running state and apply an explicit config ------------
+  const startupApps = new Map<string, AppConfig>();
+  for (const row of store.listApps()) {
+    if (row.status !== 'running') continue;
     try {
-      const bunpilotConfig = await loadConfig(configPath);
-      for (const app of bunpilotConfig.apps) {
-        console.log(`[daemon] auto-starting "${app.name}" from config`);
-        await master.startApp(app);
-      }
-    } catch (err) {
-      console.warn('[daemon] config load failed:', err instanceof Error ? err.message : err);
+      startupApps.set(row.name, validateApp(JSON.parse(row.config_json)));
+    } catch (error) {
+      store.updateAppStatus(row.name, 'errored');
+      console.error(`[daemon] cannot restore "${row.name}":`, error);
+    }
+  }
+  for (const app of loadedConfig?.apps ?? []) startupApps.set(app.name, app);
+
+  for (const app of startupApps.values()) {
+    try {
+      console.log(`[daemon] starting "${app.name}"`);
+      store.saveApp(app.name, app, configPath);
+      await master.startApp(app);
+      store.updateAppStatus(app.name, 'running');
+    } catch (error) {
+      store.updateAppStatus(app.name, 'errored');
+      console.error(`[daemon] failed to start "${app.name}":`, error);
     }
   }
 
+  writePidFile(pidFile, process.pid);
   console.log(`[daemon] ready (pid=${process.pid})`);
 }
-
-main().catch((err) => {
-  console.error('[daemon] fatal error:', err);
-  process.exit(1);
-});
 
 // ---------------------------------------------------------------------------
 // AppStatus -> AppMetricsInput adapter
@@ -206,70 +261,4 @@ function appStatusToMetricsInput(apps: AppStatus[]): AppMetricsInput[] {
       };
     }),
   }));
-}
-
-// ---------------------------------------------------------------------------
-// Log file reader
-// ---------------------------------------------------------------------------
-
-/**
- * Extract the rotation index from a log filename.
- * - `app-0-out.log`   → -1  (current / newest)
- * - `app-0-out.0.log` → 0
- * - `app-0-out.1.log` → 1
- * - `app-0-out.2.log` → 2   (oldest)
- */
-function rotationIndex(filename: string): number {
-  const match = filename.match(/\.(\d+)\.log$/);
-  return match ? parseInt(match[1], 10) : -1;
-}
-
-/**
- * Compare rotated log filenames so oldest content comes first.
- *
- * Sort order: highest rotation number first (oldest), then descending to
- * `.0.log`, then the current `.log` (newest). Files with different base
- * names (e.g. `out` vs `err`) are grouped alphabetically by base name.
- */
-function compareRotatedLogs(a: string, b: string): number {
-  const idxA = rotationIndex(a);
-  const idxB = rotationIndex(b);
-
-  // Extract base name (everything before the rotation suffix)
-  const baseA = a.replace(/(\.\d+)?\.log$/, '');
-  const baseB = b.replace(/(\.\d+)?\.log$/, '');
-
-  // Group by base name first
-  if (baseA !== baseB) return baseA.localeCompare(baseB);
-
-  // Within same base: higher rotation index = older = comes first
-  // Current file (idx -1) is newest = comes last
-  return idxB - idxA;
-}
-
-function readLogLines(appName: string, maxLines: number): string[] {
-  const appDir = join(LOGS_DIR, appName);
-  if (!existsSync(appDir)) return [];
-
-  const files = readdirSync(appDir)
-    .filter((f) => f.endsWith('.log'))
-    .sort(compareRotatedLogs)
-    .map((f) => join(appDir, f));
-
-  if (files.length === 0) return [];
-
-  const allLines: string[] = [];
-
-  for (const file of files) {
-    try {
-      const content = readFileSync(file, 'utf-8');
-      const lines = content.split('\n').filter((l) => l.length > 0);
-      allLines.push(...lines);
-    } catch {
-      // File may have been rotated/deleted
-    }
-  }
-
-  // Return last N lines
-  return allLines.slice(-maxLines);
 }

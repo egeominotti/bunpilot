@@ -10,9 +10,10 @@
 //   status  – Check whether the daemon is alive
 // ---------------------------------------------------------------------------
 
-import { daemonize, stopDaemon } from '../../daemon/daemonize';
-import { readPidFile, isProcessRunning } from '../../daemon/pid';
 import { PID_FILE } from '../../constants';
+import { daemonize, stopDaemon } from '../../daemon/daemonize';
+import { resolveDaemonPaths } from '../../daemon/paths';
+import { isBunpilotProcess, isProcessRunning, readPidFile, removePidFile } from '../../daemon/pid';
 import { logError, logSuccess, logWarn } from '../format';
 
 // ---------------------------------------------------------------------------
@@ -21,7 +22,7 @@ import { logError, logSuccess, logWarn } from '../format';
 
 export async function daemonCommand(
   args: string[],
-  _flags: Record<string, string | boolean>,
+  flags: Record<string, string | boolean>,
 ): Promise<void> {
   const sub = args[0];
 
@@ -32,11 +33,11 @@ export async function daemonCommand(
 
   switch (sub) {
     case 'start':
-      return daemonStart();
+      return daemonStart(typeof flags.config === 'string' ? flags.config : undefined);
     case 'stop':
-      return daemonStop();
+      return daemonStop(typeof flags.config === 'string' ? flags.config : undefined);
     case 'status':
-      return daemonStatus();
+      return daemonStatus(typeof flags.config === 'string' ? flags.config : undefined);
   }
 }
 
@@ -44,20 +45,23 @@ export async function daemonCommand(
 // Sub-commands
 // ---------------------------------------------------------------------------
 
-async function daemonStart(): Promise<void> {
+async function daemonStart(configPath?: string): Promise<void> {
+  const pidFile = await resolvePidFile(configPath);
   // Check if already running
-  const pid = readPidFile(PID_FILE);
-  if (pid !== null && isProcessRunning(pid)) {
+  const pid = readPidFile(pidFile);
+  if (pid !== null && isProcessRunning(pid) && isBunpilotProcess(pid)) {
     logWarn(`Daemon is already running (pid ${pid})`);
     return;
   }
+  if (pid !== null) removePidFile(pidFile, pid);
 
   // daemonize() calls process.exit(0) internally
-  await daemonize(process.cwd());
+  await daemonize(configPath);
 }
 
-async function daemonStop(): Promise<void> {
-  const stopped = await stopDaemon();
+async function daemonStop(configPath?: string): Promise<void> {
+  const pidFile = await resolvePidFile(configPath);
+  const stopped = await stopDaemon(pidFile);
   if (stopped) {
     logSuccess('Daemon stopped');
   } else {
@@ -66,17 +70,22 @@ async function daemonStop(): Promise<void> {
   }
 }
 
-function daemonStatus(): void {
-  const pid = readPidFile(PID_FILE);
+async function daemonStatus(configPath?: string): Promise<void> {
+  const pidFile = await resolvePidFile(configPath);
+  const pid = readPidFile(pidFile);
 
   if (pid === null) {
     logWarn('Daemon is not running (no PID file)');
     return;
   }
 
-  if (isProcessRunning(pid)) {
+  if (isProcessRunning(pid) && isBunpilotProcess(pid)) {
     logSuccess(`Daemon is running (pid ${pid})`);
   } else {
     logWarn(`Daemon is not running (stale PID file, pid ${pid})`);
   }
+}
+
+async function resolvePidFile(configPath?: string): Promise<string> {
+  return configPath ? (await resolveDaemonPaths(configPath)).pidFile : PID_FILE;
 }

@@ -2,7 +2,7 @@
 // bunpilot – Unit Tests for Worker SDK
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 // ---------------------------------------------------------------------------
 // We need to reset module state between tests since bunpilotStartMetrics
@@ -46,9 +46,25 @@ describe('bunpilotReady', () => {
 
     expect(sentMessages.length).toBeGreaterThanOrEqual(1);
     const readyMsg = sentMessages.find(
-      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'ready'
+      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'ready',
     );
     expect(readyMsg).toEqual({ type: 'ready' });
+  });
+
+  test('starts heartbeat reporting when the worker becomes ready', async () => {
+    const { bunpilotReady } = await import('../../src/sdk/worker');
+    sentMessages.length = 0;
+
+    bunpilotReady();
+
+    const heartbeat = sentMessages.find(
+      (message) =>
+        typeof message === 'object' &&
+        message !== null &&
+        (message as { type?: string }).type === 'heartbeat',
+    ) as { type: string; uptime: number } | undefined;
+    expect(heartbeat?.type).toBe('heartbeat');
+    expect(heartbeat?.uptime).toBeGreaterThanOrEqual(0);
   });
 
   test('does not throw when process.send is not defined', async () => {
@@ -81,6 +97,7 @@ describe('bunpilotOnShutdown', () => {
     // A new message listener should be registered
     const listenersAfter = process.listenerCount('message');
     expect(listenersAfter).toBeGreaterThan(listenersBefore);
+    expect(shutdownCalled).toBe(false);
   });
 
   test('handler is invoked when shutdown message is received', async () => {
@@ -126,6 +143,26 @@ describe('bunpilotOnShutdown', () => {
 
     expect(shutdownCalled).toBe(false);
   });
+
+  test('runs every registered cleanup handler on a shutdown request', async () => {
+    const { bunpilotOnShutdown } = await import('../../src/sdk/worker');
+    const calls: string[] = [];
+    const originalExit = process.exit;
+    (process as { exit: Function }).exit = () => {};
+
+    bunpilotOnShutdown(() => calls.push('first'));
+    bunpilotOnShutdown(async () => {
+      await Promise.resolve();
+      calls.push('second');
+    });
+
+    process.emit('message', { type: 'shutdown', timeout: 100 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(calls).toContain('first');
+    expect(calls).toContain('second');
+    (process as { exit: Function }).exit = originalExit;
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -142,7 +179,7 @@ describe('bunpilotStartMetrics', () => {
     await new Promise((resolve) => setTimeout(resolve, 250));
 
     const metricsMessages = sentMessages.filter(
-      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics'
+      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics',
     );
 
     expect(metricsMessages.length).toBeGreaterThanOrEqual(1);
@@ -178,7 +215,7 @@ describe('bunpilotStartMetrics', () => {
     const metricsMessages = sentMessages
       .slice(messagesBefore)
       .filter(
-        (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics'
+        (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics',
       );
 
     // With a 100ms interval over 250ms, we expect ~2-3 messages, not 4-6
@@ -200,7 +237,7 @@ describe('bunpilotStartMetrics', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const metricsMessages = sentMessages.filter(
-      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics'
+      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics',
     );
 
     expect(metricsMessages.length).toBeGreaterThanOrEqual(1);
@@ -221,7 +258,7 @@ describe('bunpilotStartMetrics', () => {
     await new Promise((resolve) => setTimeout(resolve, 350));
 
     const metricsMessages = sentMessages.filter(
-      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics'
+      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics',
     ) as Array<{
       type: string;
       payload: { cpu: { user: number; system: number } };
@@ -262,7 +299,7 @@ describe('bunpilotStartMetrics', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const metricsMessages = sentMessages.filter(
-      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics'
+      (m) => typeof m === 'object' && m !== null && (m as { type: string }).type === 'metrics',
     ) as Array<{
       type: string;
       payload: { cpu: { user: number; system: number } };

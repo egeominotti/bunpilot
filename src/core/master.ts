@@ -2,19 +2,19 @@
 // bunpilot – Master Orchestrator
 // ---------------------------------------------------------------------------
 
-import type { AppConfig, AppStatus, WorkerInfo } from '../config/types';
-import { PORT_RELEASE_DELAY } from '../constants';
-import { LogManager } from '../logs/manager';
-import { HealthChecker } from '../health/checker';
-import { ProxyCluster } from '../cluster/proxy';
 import { resolveInstances, shouldUseProxy } from '../cluster/policy';
-import { ProcessManager } from './process-manager';
+import { ProxyCluster } from '../cluster/proxy';
+import type { AppConfig, AppStatus, WorkerInfo } from '../config/types';
+import { INTERNAL_PORT_BASE, PORT_RELEASE_DELAY } from '../constants';
+import { HealthChecker } from '../health/checker';
+import { LogManager } from '../logs/manager';
+import { createWorkerInfo, toAppStatus } from './app-status';
 import { CrashRecovery } from './backoff';
 import { WorkerLifecycle } from './lifecycle';
+import { ProcessManager } from './process-manager';
 import { ReloadHandler } from './reload-handler';
-import { WorkerHandler, type ManagedApp } from './worker-handler';
-import { createWorkerInfo, toAppStatus } from './app-status';
-import { launchWorker, scheduleRestart, type LaunchDeps } from './worker-launch';
+import { type ManagedApp, WorkerHandler } from './worker-handler';
+import { type LaunchDeps, launchWorker, scheduleRestart } from './worker-launch';
 
 // ---------------------------------------------------------------------------
 // MasterOrchestrator
@@ -31,18 +31,28 @@ export class MasterOrchestrator {
   private readonly logManager = new LogManager();
   private readonly healthChecker = new HealthChecker();
   private readonly shutdownCallbacks: Array<() => void | Promise<void>> = [];
+  private readonly allocatedInternalPorts = new Set<number>();
+  private readonly operationQueues = new Map<string, Promise<void>>();
+  private shutdownPromise: Promise<void> | null = null;
 
-  constructor() {
+  constructor(reservedPorts: Iterable<number> = []) {
+    for (const port of reservedPorts) {
+      if (Number.isInteger(port) && port >= 1 && port <= 65_535) {
+        this.allocatedInternalPorts.add(port);
+      }
+    }
     this.workerHandler = new WorkerHandler(this.processManager, this.crashRecovery, this.lifecycle);
 
     // When a worker is deemed unhealthy, find its app and restart it.
-    this.healthChecker.onUnhealthy((workerId, reason) => {
+    this.healthChecker.onUnhealthy((workerId, reason, namespace) => {
       console.warn(`[master] worker ${workerId} unhealthy: ${reason}`);
-      for (const [, managed] of this.apps) {
+      const candidates = namespace ? [this.apps.get(namespace)] : [...this.apps.values()];
+      for (const managed of candidates) {
+        if (!managed) continue;
         const worker = this.workerHandler.findWorker(managed, workerId);
         if (worker && (worker.state === 'online' || worker.state === 'starting')) {
-          this.healthChecker.stopChecking(workerId);
-          this.healthChecker.stopHeartbeatMonitor(workerId);
+          this.healthChecker.stopChecking(workerId, managed.config.name);
+          this.healthChecker.stopHeartbeatMonitor(workerId, managed.config.name);
           scheduleRestart(this.launchDeps(), managed, worker);
           break;
         }
@@ -59,10 +69,15 @@ export class MasterOrchestrator {
   // Start
   // -----------------------------------------------------------------------
 
-  async startApp(config: AppConfig): Promise<void> {
+  startApp(config: AppConfig): Promise<void> {
+    return this.withAppLock(config.name, () => this.startAppUnlocked(config));
+  }
+
+  private async startAppUnlocked(config: AppConfig): Promise<void> {
     if (this.apps.has(config.name)) {
       throw new Error(`App "${config.name}" is already running.`);
     }
+    this.assertPublicPortAvailable(config);
 
     const instances = resolveInstances(config.instances);
     const managed: ManagedApp = {
@@ -71,6 +86,11 @@ export class MasterOrchestrator {
       spawned: new Map(),
       startedAt: Date.now(),
       stableTimers: new Map(),
+      readyTimers: new Map(),
+      workerPorts: new Map(),
+      launchTokens: new Map(),
+      restartingWorkers: new Set(),
+      stopping: false,
       nextWorkerId: instances,
     };
     this.apps.set(config.name, managed);
@@ -78,6 +98,10 @@ export class MasterOrchestrator {
     // H2 fix: if proxy startup or any spawn throws, roll back the registration
     // so the app name isn't left wedged (and partial resources don't leak).
     try {
+      this.reserveWorkerPorts(
+        managed,
+        Array.from({ length: instances }, (_, id) => id),
+      );
       this.startProxyIfNeeded(config.name, managed.config, instances);
       for (let i = 0; i < instances; i++) {
         this.spawnWorker(managed, i);
@@ -94,6 +118,8 @@ export class MasterOrchestrator {
     await this.workerHandler.stopAllWorkers(managed);
     this.workerHandler.cleanupApp(managed);
     this.stopProxy(name);
+    this.releaseAllWorkerPorts(managed);
+    await this.logManager.closeApp?.(name);
     this.apps.delete(name);
   }
 
@@ -101,31 +127,54 @@ export class MasterOrchestrator {
   // Stop
   // -----------------------------------------------------------------------
 
-  async stopApp(name: string): Promise<void> {
-    const managed = this.getManaged(name);
+  stopApp(name: string): Promise<void> {
+    return this.withAppLock(name, () => this.stopAppUnlocked(name));
+  }
 
-    this.stopWorkerMonitors(managed);
-    await this.workerHandler.stopAllWorkers(managed);
-    managed.startedAt = null;
-    this.stopProxy(name);
+  private async stopAppUnlocked(name: string): Promise<void> {
+    const managed = this.getManaged(name);
+    managed.stopping = true;
+    try {
+      this.stopWorkerMonitors(managed);
+      await this.workerHandler.stopAllWorkers(managed);
+      managed.startedAt = null;
+      this.stopProxy(name);
+      this.releaseAllWorkerPorts(managed);
+      await this.logManager.closeApp?.(name);
+    } finally {
+      managed.stopping = false;
+    }
   }
 
   // -----------------------------------------------------------------------
   // Restart (hard)
   // -----------------------------------------------------------------------
 
-  async restartApp(name: string, _force = false): Promise<void> {
+  restartApp(name: string, force = false): Promise<void> {
+    return this.withAppLock(name, () => this.restartAppUnlocked(name, force));
+  }
+
+  private async restartAppUnlocked(name: string, force = false): Promise<void> {
     const managed = this.getManaged(name);
+    managed.stopping = true;
 
-    // Bug 7 fix: Stop health checking and heartbeat monitoring before reset.
-    this.stopWorkerMonitors(managed);
-    await this.workerHandler.stopAllWorkers(managed);
+    try {
+      // Stop health checking and heartbeat monitoring before reset.
+      this.stopWorkerMonitors(managed);
+      await this.workerHandler.stopAllWorkers(managed, force);
 
-    // Stop old proxy before respawning.
-    this.stopProxy(name);
+      // Stop old proxy before respawning.
+      this.stopProxy(name);
+      this.releaseAllWorkerPorts(managed);
+      await this.logManager.closeApp?.(name);
 
-    // Bug 6 fix: Clear stable timers and backoff timers from old generation.
-    this.workerHandler.cleanupApp(managed);
+      // Clear stable timers and backoff timers from the old generation.
+      this.workerHandler.cleanupApp(managed);
+    } catch (error) {
+      // Leave the app retryable even when teardown fails part-way through.
+      managed.stopping = false;
+      throw error;
+    }
 
     const instances = resolveInstances(managed.config.instances);
 
@@ -139,10 +188,28 @@ export class MasterOrchestrator {
     managed.spawned.clear();
     managed.startedAt = Date.now();
     managed.nextWorkerId = instances;
+    managed.stopping = false;
 
-    this.startProxyIfNeeded(name, managed.config, instances);
-    for (let i = 0; i < instances; i++) {
-      this.spawnWorker(managed, i);
+    try {
+      this.reserveWorkerPorts(
+        managed,
+        Array.from({ length: instances }, (_, id) => id),
+      );
+      this.startProxyIfNeeded(name, managed.config, instances);
+      for (let i = 0; i < instances; i++) {
+        this.spawnWorker(managed, i);
+      }
+    } catch (error) {
+      managed.stopping = true;
+      try {
+        await this.rollbackRunningResources(name, managed);
+      } catch (rollbackError) {
+        console.error(`[master] failed to roll back restart for "${name}":`, rollbackError);
+      } finally {
+        managed.startedAt = null;
+        managed.stopping = false;
+      }
+      throw error;
     }
   }
 
@@ -150,10 +217,18 @@ export class MasterOrchestrator {
   // Reload (zero-downtime)
   // -----------------------------------------------------------------------
 
-  async reloadApp(name: string): Promise<void> {
+  reloadApp(name: string): Promise<void> {
+    return this.withAppLock(name, () => this.reloadAppUnlocked(name));
+  }
+
+  private async reloadAppUnlocked(name: string): Promise<void> {
     const managed = this.getManaged(name);
+    if (managed.startedAt === null || managed.stopping) {
+      throw new Error(`App "${name}" is stopped; start or restart it before reloading.`);
+    }
     const currentWorkers = [...managed.workers];
-    const replacements: WorkerInfo[] = [];
+    const uncommittedReplacements = new Set<WorkerInfo>();
+    const replacementByOldId = new Map<number, WorkerInfo>();
 
     try {
       await this.reloadHandler.rollingRestart({
@@ -163,28 +238,53 @@ export class MasterOrchestrator {
         lifecycle: this.lifecycle,
         spawnAndTrack: (_cfg, _wid) => {
           const newId = managed.nextWorkerId++;
-          const worker = this.spawnWorker(managed, newId);
-          replacements.push(worker);
-          return worker;
+          try {
+            const worker = this.spawnWorker(managed, newId);
+            uncommittedReplacements.add(worker);
+            replacementByOldId.set(_wid, worker);
+            return worker;
+          } catch (error) {
+            const partial = managed.workers.find((worker) => worker.id === newId);
+            if (partial) {
+              uncommittedReplacements.add(partial);
+              replacementByOldId.set(_wid, partial);
+            }
+            throw error;
+          }
         },
         drainAndStop: async (w) => {
           this.proxies.get(managed.config.name)?.removeWorker(w.id);
-          await this.workerHandler.drainAndStopWorker(managed, w);
-          // H1 fix: remove the drained worker from the managed list and tear
-          // down its monitors/timers — otherwise every reload leaks a ghost.
-          this.retireWorker(managed, w);
+          try {
+            await this.workerHandler.drainAndStopWorker(managed, w);
+            // H1 fix: remove the drained worker from the managed list and tear
+            // down its monitors/timers — otherwise every reload leaks a ghost.
+            await this.retireWorker(managed, w);
+            const replacement = replacementByOldId.get(w.id);
+            if (replacement) uncommittedReplacements.delete(replacement);
+          } catch (error) {
+            // A failed kill means the old worker may still be serving. Restore
+            // its state and proxy membership before rolling back its replacement.
+            const oldSpawned = managed.spawned.get(w.id);
+            if (oldSpawned && this.processManager.isRunning(oldSpawned.pid)) {
+              w.state = 'online';
+              this.proxies.get(managed.config.name)?.addWorker(w.id, managed.workerPorts.get(w.id));
+            }
+            throw error;
+          }
         },
       });
     } catch (err) {
-      // H3 fix: a replacement failed to come up. Retire any replacement that
-      // never reached 'online' so a crashed worker can't linger in the managed
-      // list or auto-restart via its own backoff timer. Old workers are left
-      // untouched (capacity preserved) and the error is surfaced.
-      for (const r of replacements) {
-        if (r.state !== 'online') {
-          this.proxies.get(managed.config.name)?.removeWorker(r.id);
+      // H3 fix: every replacement that has not been committed by a successful
+      // old-worker drain must be retired, including online replacements. This
+      // keeps a failed batch from leaving duplicate capacity or ghost workers.
+      for (const r of uncommittedReplacements) {
+        this.proxies.get(managed.config.name)?.removeWorker(r.id);
+        try {
           await this.workerHandler.drainAndStopWorker(managed, r);
-          this.retireWorker(managed, r);
+        } catch (cleanupError) {
+          console.error(`[master] failed to clean up replacement worker ${r.id}:`, cleanupError);
+        } finally {
+          await this.retireWorker(managed, r);
         }
       }
       throw err;
@@ -192,12 +292,17 @@ export class MasterOrchestrator {
   }
 
   /** Remove a fully-drained worker and release all of its per-worker state. */
-  private retireWorker(managed: ManagedApp, worker: WorkerInfo): void {
-    this.healthChecker.stopChecking(worker.id);
-    this.healthChecker.stopHeartbeatMonitor(worker.id);
+  private async retireWorker(managed: ManagedApp, worker: WorkerInfo): Promise<void> {
+    this.healthChecker.stopChecking(worker.id, managed.config.name);
+    this.healthChecker.stopHeartbeatMonitor(worker.id, managed.config.name);
     this.workerHandler.clearStableTimer(managed, worker.id);
-    this.workerHandler.clearBackoffTimer(worker.id);
-    this.crashRecovery.reset(worker.id);
+    this.workerHandler.clearReadyTimer(managed, worker.id);
+    this.workerHandler.clearBackoffTimer(worker.id, managed.config.name);
+    this.crashRecovery.reset(worker.id, managed.config.name);
+    this.releaseWorkerPort(managed, worker.id);
+    await this.logManager.closeWorker?.(managed.config.name, worker.id);
+    managed.launchTokens.delete(worker.id);
+    managed.restartingWorkers.delete(worker.id);
     const idx = managed.workers.indexOf(worker);
     if (idx !== -1) managed.workers.splice(idx, 1);
   }
@@ -206,14 +311,25 @@ export class MasterOrchestrator {
   // Delete
   // -----------------------------------------------------------------------
 
-  async deleteApp(name: string): Promise<void> {
+  deleteApp(name: string): Promise<void> {
+    return this.withAppLock(name, () => this.deleteAppUnlocked(name));
+  }
+
+  private async deleteAppUnlocked(name: string): Promise<void> {
     const managed = this.apps.get(name);
     if (managed) {
-      this.stopWorkerMonitors(managed);
-      await this.workerHandler.stopAllWorkers(managed);
-      this.workerHandler.cleanupApp(managed);
-      this.stopProxy(name);
-      this.apps.delete(name);
+      managed.stopping = true;
+      try {
+        this.stopWorkerMonitors(managed);
+        await this.workerHandler.stopAllWorkers(managed);
+        this.workerHandler.cleanupApp(managed);
+        this.stopProxy(name);
+        this.releaseAllWorkerPorts(managed);
+        await this.logManager.closeApp?.(name);
+        this.apps.delete(name);
+      } finally {
+        managed.stopping = false;
+      }
     }
   }
 
@@ -239,6 +355,12 @@ export class MasterOrchestrator {
   // -----------------------------------------------------------------------
 
   async shutdown(_signal: string): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.shutdownPromise = this.performShutdown();
+    return this.shutdownPromise;
+  }
+
+  private async performShutdown(): Promise<void> {
     // Stop all health monitors first.
     this.healthChecker.stopAll();
 
@@ -249,10 +371,15 @@ export class MasterOrchestrator {
     this.proxies.clear();
 
     const names = [...this.apps.keys()];
-    await Promise.all(names.map((n) => this.stopApp(n)));
+    const stopResults = await Promise.allSettled(names.map((n) => this.stopApp(n)));
+    for (const [index, result] of stopResults.entries()) {
+      if (result.status === 'rejected') {
+        console.error(`[master] failed to stop "${names[index]}" during shutdown:`, result.reason);
+      }
+    }
 
     // Clean up managed resources
-    this.logManager.closeAll();
+    await this.logManager.closeAll();
 
     // Run externally registered cleanup callbacks
     for (const cb of this.shutdownCallbacks) {
@@ -265,7 +392,9 @@ export class MasterOrchestrator {
   }
 
   async reloadAll(): Promise<void> {
-    const names = [...this.apps.keys()];
+    const names = [...this.apps.entries()]
+      .filter(([, managed]) => managed.startedAt !== null && !managed.stopping)
+      .map(([name]) => name);
     for (const name of names) {
       await this.reloadApp(name);
     }
@@ -276,6 +405,7 @@ export class MasterOrchestrator {
   // -----------------------------------------------------------------------
 
   private spawnWorker(managed: ManagedApp, workerId: number): WorkerInfo {
+    this.reserveWorkerPorts(managed, [workerId]);
     const worker = createWorkerInfo(workerId);
     managed.workers.push(worker);
 
@@ -311,16 +441,17 @@ export class MasterOrchestrator {
   /** Stop HTTP + heartbeat monitoring for every worker of an app. */
   private stopWorkerMonitors(managed: ManagedApp): void {
     for (const worker of managed.workers) {
-      this.healthChecker.stopChecking(worker.id);
-      this.healthChecker.stopHeartbeatMonitor(worker.id);
+      this.healthChecker.stopChecking(worker.id, managed.config.name);
+      this.healthChecker.stopHeartbeatMonitor(worker.id, managed.config.name);
     }
   }
 
   /** Start the TCP proxy for an app when its strategy requires one. */
   private startProxyIfNeeded(name: string, config: AppConfig, instances: number): void {
     if (!shouldUseProxy(config, instances)) return;
+    if (config.port === undefined) return;
     const proxy = this.createProxyCluster();
-    proxy.start(config.port!, instances);
+    proxy.start(config.port, instances, this.apps.get(name)?.workerPorts);
     this.proxies.set(name, proxy);
   }
 
@@ -337,5 +468,80 @@ export class MasterOrchestrator {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private assertPublicPortAvailable(config: AppConfig): void {
+    if (config.port === undefined) return;
+    if (this.allocatedInternalPorts.has(config.port)) {
+      throw new Error(`Port ${config.port} is already reserved by a Bunpilot worker.`);
+    }
+    for (const managed of this.apps.values()) {
+      if (managed.config.port === config.port) {
+        throw new Error(`Port ${config.port} is already used by app "${managed.config.name}".`);
+      }
+    }
+  }
+
+  private reserveWorkerPorts(managed: ManagedApp, workerIds: number[]): void {
+    if (!shouldUseProxy(managed.config, resolveInstances(managed.config.instances))) return;
+    for (const workerId of workerIds) {
+      if (managed.workerPorts.has(workerId)) continue;
+      const port = this.allocateInternalPort();
+      managed.workerPorts.set(workerId, port);
+      this.allocatedInternalPorts.add(port);
+    }
+  }
+
+  private allocateInternalPort(): number {
+    const publicPorts = new Set(
+      [...this.apps.values()]
+        .map((managed) => managed.config.port)
+        .filter((port): port is number => port !== undefined),
+    );
+    for (let port = INTERNAL_PORT_BASE; port <= 65_535; port++) {
+      if (!this.allocatedInternalPorts.has(port) && !publicPorts.has(port)) return port;
+    }
+    throw new Error('No internal worker ports are available.');
+  }
+
+  private releaseWorkerPort(managed: ManagedApp, workerId: number): void {
+    const port = managed.workerPorts.get(workerId);
+    if (port !== undefined) this.allocatedInternalPorts.delete(port);
+    managed.workerPorts.delete(workerId);
+  }
+
+  private releaseAllWorkerPorts(managed: ManagedApp): void {
+    for (const port of managed.workerPorts.values()) this.allocatedInternalPorts.delete(port);
+    managed.workerPorts.clear();
+  }
+
+  private async rollbackRunningResources(name: string, managed: ManagedApp): Promise<void> {
+    this.stopWorkerMonitors(managed);
+    await this.workerHandler.stopAllWorkers(managed);
+    this.workerHandler.cleanupApp(managed);
+    this.stopProxy(name);
+    this.releaseAllWorkerPorts(managed);
+    await this.logManager.closeApp?.(name);
+    managed.workers = [];
+    managed.spawned.clear();
+  }
+
+  /** Serialize lifecycle mutations per app while allowing different apps in parallel. */
+  private async withAppLock<T>(name: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationQueues.get(name) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.operationQueues.set(name, tail);
+
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.operationQueues.get(name) === tail) this.operationQueues.delete(name);
+    }
   }
 }

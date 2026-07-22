@@ -7,7 +7,9 @@
 //
 // ---------------------------------------------------------------------------
 
-import type { WorkerMessage, MasterMessage } from '../config/types';
+import type { WorkerMessage } from '../config/types';
+import { HEARTBEAT_INTERVAL } from '../constants';
+import { isValidMasterMessage } from '../ipc/protocol';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -30,6 +32,23 @@ function send(message: WorkerMessage): void {
  */
 export function bunpilotReady(): void {
   send({ type: 'ready' });
+  emitHeartbeat();
+  bunpilotStartHeartbeat();
+}
+
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+function emitHeartbeat(): void {
+  send({ type: 'heartbeat', uptime: process.uptime() });
+}
+
+/** Start liveness heartbeats. `bunpilotReady()` calls this automatically. */
+export function bunpilotStartHeartbeat(interval: number = HEARTBEAT_INTERVAL): void {
+  assertInterval(interval, 'heartbeat interval');
+  if (heartbeatTimer !== null) return;
+
+  heartbeatTimer = setInterval(emitHeartbeat, interval);
+  heartbeatTimer.unref?.();
 }
 
 // ---------------------------------------------------------------------------
@@ -44,16 +63,9 @@ export function bunpilotReady(): void {
  */
 export function bunpilotOnShutdown(handler: () => Promise<void> | void): void {
   if (typeof process.on !== 'function') return;
-
-  process.on('message', async (msg: unknown) => {
-    if (typeof msg === 'object' && msg !== null && (msg as MasterMessage).type === 'shutdown') {
-      try {
-        await handler();
-      } finally {
-        process.exit(0);
-      }
-    }
-  });
+  shutdownHandlers.add(handler);
+  installMessageDispatcher();
+  installSignalHandlers();
 }
 
 // ---------------------------------------------------------------------------
@@ -63,67 +75,102 @@ export function bunpilotOnShutdown(handler: () => Promise<void> | void): void {
 /** Active metrics interval handle – kept for cleanup. */
 let metricsTimer: ReturnType<typeof setInterval> | null = null;
 
+const shutdownHandlers = new Set<() => Promise<void> | void>();
+let messageDispatcherInstalled = false;
+let signalHandlersInstalled = false;
+let shutdownPromise: Promise<void> | null = null;
+
+function assertInterval(interval: number, label: string): void {
+  if (!Number.isSafeInteger(interval) || interval <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+}
+
+function stopTimers(): void {
+  if (heartbeatTimer !== null) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  if (metricsTimer !== null) {
+    clearInterval(metricsTimer);
+    metricsTimer = null;
+  }
+}
+
+function collectMetrics(): void {
+  const mem = process.memoryUsage();
+  const cpu = process.cpuUsage();
+  send({
+    type: 'metrics',
+    payload: {
+      memory: {
+        rss: mem.rss,
+        heapTotal: mem.heapTotal,
+        heapUsed: mem.heapUsed,
+        external: mem.external,
+      },
+      cpu: { user: cpu.user, system: cpu.system },
+    },
+  });
+}
+
+function installMessageDispatcher(): void {
+  if (messageDispatcherInstalled || typeof process.on !== 'function') return;
+  messageDispatcherInstalled = true;
+  process.on('message', (message: unknown) => {
+    if (!isValidMasterMessage(message)) return;
+    if (message.type === 'shutdown') {
+      void runShutdown(message.timeout);
+    } else if (message.type === 'collect-metrics' && metricsTimer !== null) {
+      collectMetrics();
+    } else if (message.type === 'ping') {
+      send({ type: 'heartbeat', uptime: process.uptime() });
+    }
+  });
+}
+
+function installSignalHandlers(): void {
+  if (signalHandlersInstalled || typeof process.on !== 'function') return;
+  signalHandlersInstalled = true;
+  process.on('SIGTERM', () => void runShutdown(5_000));
+  process.on('SIGINT', () => void runShutdown(5_000));
+}
+
+function runShutdown(timeout: number): Promise<void> {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    stopTimers();
+    const cleanup = Promise.allSettled([...shutdownHandlers].map((handler) => handler()));
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timeoutHandle = setTimeout(resolve, timeout);
+    });
+    await Promise.race([cleanup.then(() => undefined), deadline]);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    process.exit(0);
+    // `process.exit` never returns in production. Test doubles may return,
+    // which lets subsequent tests exercise a fresh shutdown request.
+    shutdownPromise = null;
+  })();
+  return shutdownPromise;
+}
+
 /**
  * Start periodic reporting of process metrics (memory + CPU) to the master.
  *
  * @param interval - Reporting interval in milliseconds (default 5000).
  */
 export function bunpilotStartMetrics(interval: number = 5_000): void {
+  assertInterval(interval, 'metrics interval');
   // Avoid duplicate intervals
   if (metricsTimer !== null) return;
 
-  metricsTimer = setInterval(() => {
-    const mem = process.memoryUsage();
-    const cpuNow = process.cpuUsage();
-
-    send({
-      type: 'metrics',
-      payload: {
-        memory: {
-          rss: mem.rss,
-          heapTotal: mem.heapTotal,
-          heapUsed: mem.heapUsed,
-          external: mem.external,
-        },
-        cpu: {
-          user: cpuNow.user,
-          system: cpuNow.system,
-        },
-      },
-    });
-  }, interval);
+  metricsTimer = setInterval(collectMetrics, interval);
 
   // Unref so the timer does not prevent the process from exiting
   if (metricsTimer && typeof metricsTimer.unref === 'function') {
     metricsTimer.unref();
   }
 
-  // Also respond to on-demand collect-metrics requests
-  if (typeof process.on === 'function') {
-    process.on('message', (msg: unknown) => {
-      if (
-        typeof msg === 'object' &&
-        msg !== null &&
-        (msg as MasterMessage).type === 'collect-metrics'
-      ) {
-        const mem = process.memoryUsage();
-        const cpu = process.cpuUsage();
-        send({
-          type: 'metrics',
-          payload: {
-            memory: {
-              rss: mem.rss,
-              heapTotal: mem.heapTotal,
-              heapUsed: mem.heapUsed,
-              external: mem.external,
-            },
-            cpu: {
-              user: cpu.user,
-              system: cpu.system,
-            },
-          },
-        });
-      }
-    });
-  }
+  installMessageDispatcher();
 }

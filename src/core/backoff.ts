@@ -9,7 +9,7 @@ import type { AppConfig, BackoffState } from '../config/types';
 // ---------------------------------------------------------------------------
 
 export class CrashRecovery {
-  private readonly states = new Map<number, BackoffState>();
+  private readonly states = new Map<number | string, BackoffState>();
 
   // -----------------------------------------------------------------------
   // Public API
@@ -22,12 +22,16 @@ export class CrashRecovery {
    * Returns `'restart'` when we should try again and `'give-up'` when the
    * worker exceeded `maxRestarts` inside the current window.
    */
-  onWorkerCrash(workerId: number, config: AppConfig): 'restart' | 'give-up' {
+  onWorkerCrash(
+    workerId: number,
+    config: AppConfig,
+    namespace: string = '',
+  ): 'restart' | 'give-up' {
     const now = Date.now();
-    const state = this.getOrCreate(workerId, now);
+    const state = this.getOrCreate(this.key(workerId, namespace), now);
 
     // Slide the window: reset counter when the window has elapsed.
-    if (now - state.windowStart > config.maxRestartWindow) {
+    if (now - state.windowStart >= config.maxRestartWindow) {
       state.windowStart = now;
       state.restartsInWindow = 0;
     }
@@ -52,16 +56,16 @@ export class CrashRecovery {
    * `minUptime`.  Resets the consecutive crash counter so the next crash
    * starts a fresh exponential back-off curve.
    */
-  onWorkerStable(workerId: number): void {
-    const state = this.states.get(workerId);
+  onWorkerStable(workerId: number, namespace: string = ''): void {
+    const state = this.states.get(this.key(workerId, namespace));
     if (state) {
       state.consecutiveCrashes = 0;
     }
   }
 
   /** Returns the number of milliseconds to wait before the next restart. */
-  getDelay(workerId: number): number {
-    const state = this.states.get(workerId);
+  getDelay(workerId: number, namespace: string = ''): number {
+    const state = this.states.get(this.key(workerId, namespace));
     if (!state) return 0;
 
     const remaining = state.nextRestartAt - Date.now();
@@ -69,8 +73,8 @@ export class CrashRecovery {
   }
 
   /** Full reset – removes all tracking data for the given worker. */
-  reset(workerId: number): void {
-    this.states.delete(workerId);
+  reset(workerId: number, namespace: string = ''): void {
+    this.states.delete(this.key(workerId, namespace));
   }
 
   /** Full reset of all workers. */
@@ -79,16 +83,16 @@ export class CrashRecovery {
   }
 
   /** Read-only access to backoff state (useful for status/debug). */
-  getState(workerId: number): BackoffState | undefined {
-    return this.states.get(workerId);
+  getState(workerId: number, namespace: string = ''): BackoffState | undefined {
+    return this.states.get(this.key(workerId, namespace));
   }
 
   // -----------------------------------------------------------------------
   // Internals
   // -----------------------------------------------------------------------
 
-  private getOrCreate(workerId: number, now: number): BackoffState {
-    let state = this.states.get(workerId);
+  private getOrCreate(key: number | string, now: number): BackoffState {
+    let state = this.states.get(key);
     if (!state) {
       state = {
         consecutiveCrashes: 0,
@@ -98,9 +102,13 @@ export class CrashRecovery {
         windowStart: now,
         restartsInWindow: 0,
       };
-      this.states.set(workerId, state);
+      this.states.set(key, state);
     }
     return state;
+  }
+
+  private key(workerId: number, namespace: string): number | string {
+    return namespace.length === 0 ? workerId : `${namespace}\0${workerId}`;
   }
 
   /**
@@ -112,7 +120,7 @@ export class CrashRecovery {
     backoff: { initial: number; multiplier: number; max: number },
   ): number {
     const exponent = Math.max(0, state.consecutiveCrashes - 1);
-    const raw = backoff.initial * Math.pow(backoff.multiplier, exponent);
+    const raw = backoff.initial * backoff.multiplier ** exponent;
     return Math.min(raw, backoff.max);
   }
 }

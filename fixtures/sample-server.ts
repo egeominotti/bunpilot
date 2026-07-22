@@ -5,9 +5,10 @@
 // Run with: bunpilot start fixtures/sample-server.ts
 // ---------------------------------------------------------------------------
 
-import { bunpilotReady, bunpilotOnShutdown, bunpilotStartMetrics } from '../src/sdk/worker';
+import { hostname } from 'node:os';
+import { bunpilotOnShutdown, bunpilotReady, bunpilotStartMetrics } from '../src/sdk/worker';
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.BUNPILOT_PORT ?? process.env.PORT) || 3000;
 const startedAt = Date.now();
 
 const server = Bun.serve({
@@ -23,7 +24,7 @@ const server = Bun.serve({
       return Response.json({
         pid: process.pid,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
-        hostname: require('os').hostname(),
+        hostname: hostname(),
         port: PORT,
       });
     }

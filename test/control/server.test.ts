@@ -2,13 +2,13 @@
 // bunpilot – Control Server unit tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach } from 'bun:test';
-import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
-import { ControlServer, type CommandHandler } from '../../src/control/server';
-import { createResponse, createErrorResponse } from '../../src/control/protocol';
+import { ControlClient } from '../../src/control/client';
+import { createResponse, MAX_CONTROL_FRAME_BYTES } from '../../src/control/protocol';
+import { type CommandHandler, ControlServer } from '../../src/control/server';
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown
@@ -81,18 +81,30 @@ describe('ControlServer', () => {
       expect(existsSync(socketPath)).toBe(true);
     });
 
-    test('removes stale socket before starting', async () => {
+    test('refuses to overwrite a regular file configured as the socket path', async () => {
       const dir = freshTempDir();
       const socketPath = join(dir, 'stale.sock');
 
-      // Create a stale file at the socket path
-      writeFileSync(socketPath, 'stale');
-      expect(existsSync(socketPath)).toBe(true);
+      writeFileSync(socketPath, 'must-not-be-deleted');
 
       const server = trackServer(new ControlServer(socketPath, echoHandler()));
-      await server.start();
-      // Socket should exist (replaced stale file)
+      await expect(server.start()).rejects.toThrow('not a Unix socket');
+
       expect(existsSync(socketPath)).toBe(true);
+      expect(readFileSync(socketPath, 'utf8')).toBe('must-not-be-deleted');
+    });
+
+    test('refuses to unlink and replace an active control socket', async () => {
+      const dir = freshTempDir();
+      const socketPath = join(dir, 'active.sock');
+      const first = trackServer(new ControlServer(socketPath, echoHandler()));
+      const second = trackServer(new ControlServer(socketPath, echoHandler()));
+
+      await first.start();
+      await expect(second.start()).rejects.toThrow('already in use');
+
+      const response = await new ControlClient(socketPath).send('ping');
+      expect(response.ok).toBe(true);
     });
   });
 
@@ -137,11 +149,27 @@ describe('ControlServer', () => {
   // -------------------------------------------------------------------------
 
   describe('request handling', () => {
+    test('converts an oversized handler response into a bounded error frame', async () => {
+      const dir = freshTempDir();
+      const socketPath = join(dir, 'oversized-response.sock');
+      const server = trackServer(
+        new ControlServer(socketPath, async () =>
+          createResponse('', { payload: 'x'.repeat(MAX_CONTROL_FRAME_BYTES + 1) }),
+        ),
+      );
+      await server.start();
+
+      const response = await new ControlClient(socketPath).send('dump');
+
+      expect(response.ok).toBe(false);
+      expect(response.error).toContain('response exceeds');
+    });
+
     test('responds to a valid NDJSON request', async () => {
       const dir = freshTempDir();
       const socketPath = join(dir, 'req.sock');
       const server = trackServer(
-        new ControlServer(socketPath, async (cmd, args) => {
+        new ControlServer(socketPath, async (cmd, _args) => {
           return createResponse('', { echo: cmd });
         }),
       );
@@ -382,64 +410,13 @@ describe('ControlServer', () => {
       await new Promise((r) => setTimeout(r, 50));
       expect(internalClients.size).toBeGreaterThanOrEqual(1);
 
-      // Simulate the error handler being called on the server side.
-      // Access the server's socket handler and call error() directly on
-      // one of the registered clients.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const serverInternal = (server as any).server;
-      // We verify the error handler removes the client by checking the Map.
-      // Since we can't easily trigger a real socket error, we verify the
-      // error callback on the server includes `this.clients.delete(socket)`.
-
-      // Instead, close the client socket which triggers close() and verify cleanup
+      // Close the client socket and verify the server releases its state.
       socket.end();
 
       // Give time for close event
       await new Promise((r) => setTimeout(r, 50));
 
       // After close, client should be removed
-      expect(internalClients.size).toBe(0);
-    });
-
-    test('error handler removes client from map (direct verification)', async () => {
-      const dir = freshTempDir();
-      const socketPath = join(dir, 'error-direct.sock');
-      const server = trackServer(new ControlServer(socketPath, echoHandler()));
-
-      await server.start();
-
-      // Access internal clients map
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const internalClients = (server as any).clients as Map<object, object>;
-
-      // Manually simulate: add a fake client, then call the error handler
-      const fakeSocket = { fake: true };
-      internalClients.set(fakeSocket, { buffer: '' });
-      expect(internalClients.size).toBe(1);
-
-      // Access the socket handler's error callback from the Bun.listen config.
-      // The server stores its socket handlers. We can simulate by accessing
-      // the server's error handler. Since ControlServer binds `this` via arrow
-      // functions, we can trigger the error path by calling the error handler.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const bunServer = (server as any).server;
-      // Bun.listen returns a server with a `data` property containing socket handlers
-      // But we can just verify the map behavior directly:
-
-      // The fix ensures error handler calls this.clients.delete(socket).
-      // We verify by calling the error handler extracted from the server config.
-      // Since the socket handlers use arrow functions binding `this` to the
-      // ControlServer instance, we can verify the behavior through the source code.
-
-      // Alternatively, verify that the clients Map properly cleans up
-      // by checking the source code has the fix applied.
-      // For a concrete test: the error callback should call delete.
-      // We already confirmed close() works above. Let's verify the fix
-      // is present by checking that error also deletes from the map.
-
-      // Simulate calling error on the server by directly invoking
-      // what the error callback would do:
-      internalClients.delete(fakeSocket);
       expect(internalClients.size).toBe(0);
     });
   });

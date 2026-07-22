@@ -4,6 +4,8 @@ node_modules/
 # Build output
 dist/
 bunpilot
+bunpm
+*.map
 
 # Runtime data
 .tmp/

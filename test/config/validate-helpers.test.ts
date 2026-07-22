@@ -2,22 +2,22 @@
 // bunpilot – Unit Tests for Validation Helpers
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
-  isRecord,
-  assertString,
   assertNumber,
   assertPositiveInt,
+  assertString,
+  isRecord,
+  validateBackoff,
   validateBoundedNumber,
-  validatePort,
-  validateInstances,
-  validateShutdownSignal,
+  validateClustering,
   validateEnv,
   validateHealthCheck,
-  validateBackoff,
+  validateInstances,
   validateLogs,
   validateMetrics,
-  validateClustering,
+  validatePort,
+  validateShutdownSignal,
 } from '../../src/config/validate-helpers';
 
 // ---------------------------------------------------------------------------
@@ -355,9 +355,7 @@ describe('assertPositiveInt', () => {
   });
 
   test('throws for non-number types (delegates to assertNumber)', () => {
-    expect(() => assertPositiveInt('5', 'field', 'ctx')).toThrow(
-      '"field" must be a finite number',
-    );
+    expect(() => assertPositiveInt('5', 'field', 'ctx')).toThrow('"field" must be a finite number');
     expect(() => assertPositiveInt(null, 'field', 'ctx')).toThrow(
       '"field" must be a finite number',
     );
@@ -367,9 +365,7 @@ describe('assertPositiveInt', () => {
   });
 
   test('throws for NaN and Infinity (delegates to assertNumber)', () => {
-    expect(() => assertPositiveInt(NaN, 'field', 'ctx')).toThrow(
-      '"field" must be a finite number',
-    );
+    expect(() => assertPositiveInt(NaN, 'field', 'ctx')).toThrow('"field" must be a finite number');
     expect(() => assertPositiveInt(Infinity, 'field', 'ctx')).toThrow(
       '"field" must be a finite number',
     );
@@ -409,23 +405,28 @@ describe('validateLogs', () => {
 
   test('accepts outFile and errFile strings', () => {
     const result = validateLogs(
-      { outFile: '/var/log/app-out.log', errFile: '/var/log/app-err.log' },
+      { outFile: 'archive/app-out.log', errFile: 'archive/app-err.log' },
       'ctx',
     );
-    expect(result.outFile).toBe('/var/log/app-out.log');
-    expect(result.errFile).toBe('/var/log/app-err.log');
+    expect(result.outFile).toBe('archive/app-out.log');
+    expect(result.errFile).toBe('archive/app-err.log');
   });
 
-  test('ignores empty outFile and errFile strings', () => {
-    const result = validateLogs({ outFile: '', errFile: '' }, 'ctx');
-    expect(result.outFile).toBeUndefined();
-    expect(result.errFile).toBeUndefined();
+  test('rejects absolute and parent-traversing log filenames', () => {
+    expect(() => validateLogs({ outFile: '../escape.log' }, 'ctx')).toThrow();
+    expect(() => validateLogs({ errFile: '/tmp/escape.log' }, 'ctx')).toThrow();
   });
 
-  test('ignores non-string outFile and errFile', () => {
-    const result = validateLogs({ outFile: 123, errFile: true }, 'ctx');
-    expect(result.outFile).toBeUndefined();
-    expect(result.errFile).toBeUndefined();
+  test('rejects empty outFile and errFile strings', () => {
+    expect(() => validateLogs({ outFile: '', errFile: '' }, 'ctx')).toThrow(
+      '"logs.outFile" must be a non-empty string',
+    );
+  });
+
+  test('rejects non-string outFile and errFile', () => {
+    expect(() => validateLogs({ outFile: 123, errFile: true }, 'ctx')).toThrow(
+      '"logs.outFile" must be a non-empty string',
+    );
   });
 
   test('throws when not an object', () => {
@@ -497,14 +498,16 @@ describe('validateMetrics', () => {
     expect(result.collectInterval).toBe(10_000);
   });
 
-  test('uses default enabled when not a boolean', () => {
-    const result = validateMetrics({ enabled: 'yes' }, 'ctx');
-    expect(result.enabled).toBe(true);
+  test('rejects enabled when not a boolean', () => {
+    expect(() => validateMetrics({ enabled: 'yes' }, 'ctx')).toThrow(
+      '"metrics.enabled" must be a boolean',
+    );
   });
 
-  test('uses default prometheus when not a boolean', () => {
-    const result = validateMetrics({ prometheus: 'yes' }, 'ctx');
-    expect(result.prometheus).toBe(false);
+  test('rejects prometheus when not a boolean', () => {
+    expect(() => validateMetrics({ prometheus: 'yes' }, 'ctx')).toThrow(
+      '"metrics.prometheus" must be a boolean',
+    );
   });
 
   test('uses default httpPort when not provided', () => {
@@ -598,9 +601,10 @@ describe('validateClustering', () => {
     );
   });
 
-  test('uses default enabled when not a boolean', () => {
-    const result = validateClustering({ enabled: 'yes' }, 'ctx');
-    expect(result.enabled).toBe(true);
+  test('rejects enabled when not a boolean', () => {
+    expect(() => validateClustering({ enabled: 'yes' }, 'ctx')).toThrow(
+      '"clustering.enabled" must be a boolean',
+    );
   });
 
   test('throws when not an object', () => {
@@ -614,27 +618,28 @@ describe('validateClustering', () => {
     expect(result.rollingRestart).toEqual({ batchSize: 1, batchDelay: 1_000 });
   });
 
-  test('uses default rollingRestart when not an object', () => {
-    const result = validateClustering({ rollingRestart: 'bad' }, 'ctx');
-    expect(result.rollingRestart).toEqual({ batchSize: 1, batchDelay: 1_000 });
+  test('rejects rollingRestart when explicitly malformed', () => {
+    expect(() => validateClustering({ rollingRestart: 'bad' }, 'ctx')).toThrow(
+      '"clustering.rollingRestart" must be an object',
+    );
   });
 
   test('throws when rollingRestart.batchSize is out of range', () => {
-    expect(() =>
-      validateClustering({ rollingRestart: { batchSize: 0 } }, 'ctx'),
-    ).toThrow('"clustering.rollingRestart.batchSize" must be between 1 and 100');
-    expect(() =>
-      validateClustering({ rollingRestart: { batchSize: 101 } }, 'ctx'),
-    ).toThrow('"clustering.rollingRestart.batchSize" must be between 1 and 100');
+    expect(() => validateClustering({ rollingRestart: { batchSize: 0 } }, 'ctx')).toThrow(
+      '"clustering.rollingRestart.batchSize" must be between 1 and 100',
+    );
+    expect(() => validateClustering({ rollingRestart: { batchSize: 101 } }, 'ctx')).toThrow(
+      '"clustering.rollingRestart.batchSize" must be between 1 and 100',
+    );
   });
 
   test('throws when rollingRestart.batchDelay is out of range', () => {
-    expect(() =>
-      validateClustering({ rollingRestart: { batchDelay: -1 } }, 'ctx'),
-    ).toThrow('"clustering.rollingRestart.batchDelay" must be between 0 and 300000');
-    expect(() =>
-      validateClustering({ rollingRestart: { batchDelay: 400_000 } }, 'ctx'),
-    ).toThrow('"clustering.rollingRestart.batchDelay" must be between 0 and 300000');
+    expect(() => validateClustering({ rollingRestart: { batchDelay: -1 } }, 'ctx')).toThrow(
+      '"clustering.rollingRestart.batchDelay" must be between 0 and 300000',
+    );
+    expect(() => validateClustering({ rollingRestart: { batchDelay: 400_000 } }, 'ctx')).toThrow(
+      '"clustering.rollingRestart.batchDelay" must be between 0 and 300000',
+    );
   });
 
   test('uses defaults for omitted rollingRestart fields', () => {
@@ -715,12 +720,12 @@ describe('validateBoundedNumber integer mode', () => {
 
 describe('validateHealthCheck cross-field validation', () => {
   test('throws when timeout >= interval', () => {
-    expect(() =>
-      validateHealthCheck({ timeout: 30_000, interval: 30_000 }, 'ctx'),
-    ).toThrow('timeout');
-    expect(() =>
-      validateHealthCheck({ timeout: 40_000, interval: 30_000 }, 'ctx'),
-    ).toThrow('timeout');
+    expect(() => validateHealthCheck({ timeout: 30_000, interval: 30_000 }, 'ctx')).toThrow(
+      'timeout',
+    );
+    expect(() => validateHealthCheck({ timeout: 40_000, interval: 30_000 }, 'ctx')).toThrow(
+      'timeout',
+    );
   });
 
   test('accepts when timeout < interval', () => {
@@ -730,15 +735,32 @@ describe('validateHealthCheck cross-field validation', () => {
   });
 });
 
+describe('explicit sub-config value validation', () => {
+  test('rejects invalid booleans instead of silently using defaults', () => {
+    expect(() => validateHealthCheck({ enabled: 'false' }, 'ctx')).toThrow(
+      '"healthCheck.enabled" must be a boolean',
+    );
+    expect(() => validateMetrics({ enabled: 1 }, 'ctx')).toThrow(
+      '"metrics.enabled" must be a boolean',
+    );
+    expect(() => validateClustering({ enabled: 'yes' }, 'ctx')).toThrow(
+      '"clustering.enabled" must be a boolean',
+    );
+  });
+
+  test('rejects malformed health paths and log filenames', () => {
+    expect(() => validateHealthCheck({ path: '' }, 'ctx')).toThrow('"healthCheck.path"');
+    expect(() => validateLogs({ outFile: 123 }, 'ctx')).toThrow('"logs.outFile"');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // validateBackoff cross-field: initial > max (Bug 11)
 // ---------------------------------------------------------------------------
 
 describe('validateBackoff cross-field validation', () => {
   test('throws when initial > max', () => {
-    expect(() =>
-      validateBackoff({ initial: 60_000, max: 30_000 }, 'ctx'),
-    ).toThrow('initial');
+    expect(() => validateBackoff({ initial: 60_000, max: 30_000 }, 'ctx')).toThrow('initial');
   });
 
   test('accepts when initial <= max', () => {

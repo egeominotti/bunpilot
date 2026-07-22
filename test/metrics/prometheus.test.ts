@@ -2,8 +2,8 @@
 // bunpilot – Prometheus formatter unit tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
-import { formatPrometheus, type AppMetricsInput } from '../../src/metrics/prometheus';
+import { describe, expect, test } from 'bun:test';
+import { type AppMetricsInput, formatPrometheus } from '../../src/metrics/prometheus';
 
 function makeApp(name: string, overrides: Partial<AppMetricsInput> = {}): AppMetricsInput {
   return {

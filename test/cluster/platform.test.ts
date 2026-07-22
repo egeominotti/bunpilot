@@ -2,11 +2,8 @@
 // bunpilot – Unit Tests for Cluster Platform Detection
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
-import {
-  detectStrategy,
-  isReusePortSupported,
-} from '../../src/cluster/platform';
+import { describe, expect, test } from 'bun:test';
+import { detectStrategy, isReusePortSupported } from '../../src/cluster/platform';
 
 // ---------------------------------------------------------------------------
 // detectStrategy

@@ -7,8 +7,10 @@
 // Bun-native APIs and tests real behavior end-to-end.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
-import { resolve } from 'node:path';
+import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -22,8 +24,10 @@ const ENTRY = resolve(import.meta.dir, '../src/index.ts');
  */
 async function runCLI(
   args: string[],
+  cwd: string = process.cwd(),
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = Bun.spawn(['bun', 'run', ENTRY, ...args], {
+    cwd,
     stdout: 'pipe',
     stderr: 'pipe',
     env: { ...process.env, NO_COLOR: undefined },
@@ -43,6 +47,7 @@ async function runCLI(
  * Strip ANSI escape codes so assertions work against plain text.
  */
 function stripAnsi(str: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI SGR sequences begin with ESC.
   return str.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
@@ -179,7 +184,7 @@ describe('showVersion', () => {
     const { stdout } = await runCLI(['--version']);
     const plain = stripAnsi(stdout).trim();
 
-    expect(plain).toBe('bunpilot v0.2.1');
+    expect(plain).toBe('bunpilot v1.0.0');
   });
 
   test('--version takes precedence over help when command is empty', async () => {
@@ -318,11 +323,14 @@ describe('main – command routing', () => {
   });
 
   test('init command is recognized', async () => {
-    // init may succeed or fail depending on whether a config already exists,
-    // but it should never say "Unknown command".
-    const { stderr } = await runCLI(['init']);
-    const plain = stripAnsi(stderr);
-    expect(plain).not.toContain('Unknown command');
+    const directory = mkdtempSync(join(tmpdir(), 'bunpilot-index-init-'));
+    try {
+      const { stderr } = await runCLI(['init'], directory);
+      const plain = stripAnsi(stderr);
+      expect(plain).not.toContain('Unknown command');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   // ---- Edge cases ----

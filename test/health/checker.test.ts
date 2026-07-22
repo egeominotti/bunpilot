@@ -2,13 +2,17 @@
 // bunpilot – HealthChecker unit tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { HealthChecker, type UnhealthyCallback } from '../../src/health/checker';
-import type { AppConfig } from '../../src/config/types';
-import { INTERNAL_PORT_BASE, HEARTBEAT_INTERVAL, HEARTBEAT_MISS_THRESHOLD } from '../../src/constants';
-import { detectStrategy } from '../../src/cluster/platform';
-import { ProcessManager } from '../../src/core/process-manager';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Server } from 'bun';
+import { detectStrategy } from '../../src/cluster/platform';
+import type { AppConfig } from '../../src/config/types';
+import {
+  HEARTBEAT_INTERVAL,
+  HEARTBEAT_MISS_THRESHOLD,
+  INTERNAL_PORT_BASE,
+} from '../../src/constants';
+import { ProcessManager } from '../../src/core/process-manager';
+import { HealthChecker, type UnhealthyCallback } from '../../src/health/checker';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,6 +109,39 @@ describe('HealthChecker', () => {
       checker.onHeartbeat(1);
       checker.onHeartbeat(1);
       expect(checker.isHeartbeatStale(1)).toBe(false);
+    });
+  });
+
+  describe('application namespaces', () => {
+    test('same worker id in two apps keeps independent heartbeat state', () => {
+      const originalNow = Date.now;
+      let now = 10_000;
+      Date.now = () => now;
+
+      try {
+        checker.onHeartbeat(0, 'app-a');
+        now += HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD - 1;
+        checker.onHeartbeat(0, 'app-b');
+        now += 1;
+
+        expect(checker.isHeartbeatStale(0, 'app-a')).toBe(true);
+        expect(checker.isHeartbeatStale(0, 'app-b')).toBe(false);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+
+    test('starting a monitor for one app does not replace the same worker id in another app', () => {
+      checker.startHeartbeatMonitor(0, () => {}, 'app-a');
+      checker.startHeartbeatMonitor(0, () => {}, 'app-b');
+
+      const heartbeatTimers = (checker as unknown as { heartbeatTimers: Map<string, Timer> })
+        .heartbeatTimers;
+      expect(heartbeatTimers.size).toBe(2);
+
+      checker.stopHeartbeatMonitor(0, 'app-a');
+      expect(heartbeatTimers.size).toBe(1);
+      checker.stopHeartbeatMonitor(0, 'app-b');
     });
   });
 
@@ -277,9 +314,20 @@ describe('HealthChecker', () => {
       const matrix: AppConfig[] = [
         makeConfig({ instances: 1 }), // not clustered, no port
         makeConfig({ port: 8080, instances: 1 }), // not clustered, with port
-        makeConfig({ port: 8080, instances: 4, clustering: { enabled: true, strategy: 'reusePort', rollingRestart: rr } }),
-        makeConfig({ port: 8080, instances: 4, clustering: { enabled: true, strategy: 'proxy', rollingRestart: rr } }),
-        makeConfig({ instances: 4, clustering: { enabled: true, strategy: 'proxy', rollingRestart: rr } }), // clustered, NO port
+        makeConfig({
+          port: 8080,
+          instances: 4,
+          clustering: { enabled: true, strategy: 'reusePort', rollingRestart: rr },
+        }),
+        makeConfig({
+          port: 8080,
+          instances: 4,
+          clustering: { enabled: true, strategy: 'proxy', rollingRestart: rr },
+        }),
+        makeConfig({
+          instances: 4,
+          clustering: { enabled: true, strategy: 'proxy', rollingRestart: rr },
+        }), // clustered, NO port
       ];
 
       for (const cfg of matrix) {
@@ -305,7 +353,11 @@ describe('HealthChecker', () => {
       ).buildEnv(
         makeConfig({
           instances: 4,
-          clustering: { enabled: true, strategy: 'reusePort', rollingRestart: { batchSize: 1, batchDelay: 0 } },
+          clustering: {
+            enabled: true,
+            strategy: 'reusePort',
+            rollingRestart: { batchSize: 1, batchDelay: 0 },
+          },
         }),
         0,
       );
@@ -381,12 +433,11 @@ describe('HealthChecker', () => {
       const calls: Array<{ workerId: number; reason: string }> = [];
       checker.onUnhealthy((id, reason) => calls.push({ workerId: id, reason }));
 
-      const port = INTERNAL_PORT_BASE + 100; // nothing listening here
       const config = makeConfig({
         healthCheck: {
           enabled: true,
           path: '/health',
-          interval: 50,  // fast interval for testing
+          interval: 50, // fast interval for testing
           timeout: 30,
           unhealthyThreshold: 2,
         },
@@ -494,7 +545,7 @@ describe('HealthChecker', () => {
       const port = 19_500 + Math.floor(Math.random() * 500);
       const workerId = port - INTERNAL_PORT_BASE;
 
-      let requestedPaths: string[] = [];
+      const requestedPaths: string[] = [];
       const srv = Bun.serve({
         port,
         fetch(req) {
@@ -535,7 +586,6 @@ describe('HealthChecker', () => {
       const calls: Array<{ workerId: number; reason: string }> = [];
       checker.onUnhealthy((id, reason) => calls.push({ workerId: id, reason }));
 
-      const port = INTERNAL_PORT_BASE + 200;
       const config = makeConfig({
         healthCheck: {
           enabled: true,
@@ -1049,7 +1099,6 @@ describe('HealthChecker', () => {
 
   describe('unhealthy fires only once at threshold', () => {
     test('unhealthy callback fires exactly once, not on every subsequent failure', async () => {
-      const port = INTERNAL_PORT_BASE + 150; // nothing listening here
       const calls: Array<{ workerId: number; reason: string }> = [];
       checker.onUnhealthy((id, reason) => calls.push({ workerId: id, reason }));
 

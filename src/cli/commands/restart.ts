@@ -5,9 +5,9 @@
 // Restart an application by name. All workers are stopped and re-spawned.
 // ---------------------------------------------------------------------------
 
-import { sendCommand, requireArg } from './_connect';
 import type { AppStatus } from '../../config/types';
 import { logWarn } from '../format';
+import { requireArg, sendCommand } from './_connect';
 
 // ---------------------------------------------------------------------------
 // Command
@@ -15,7 +15,7 @@ import { logWarn } from '../format';
 
 export async function restartCommand(
   args: string[],
-  _flags: Record<string, string | boolean>,
+  flags: Record<string, string | boolean>,
 ): Promise<void> {
   const name = requireArg(args, 'app-name');
 
@@ -27,10 +27,17 @@ export async function restartCommand(
       return;
     }
     for (const app of apps) {
-      await sendCommand('restart', { name: app.name });
+      await sendCommand('restart', restartArgs(app.name, flags));
     }
     return;
   }
 
-  await sendCommand('restart', { name });
+  await sendCommand('restart', restartArgs(name, flags));
+}
+
+function restartArgs(
+  name: string,
+  flags: Record<string, string | boolean>,
+): { name: string; force?: true } {
+  return flags.force === true ? { name, force: true } : { name };
 }

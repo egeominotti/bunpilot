@@ -10,8 +10,12 @@
 // global mock pollution that would affect other test files.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { ControlResponse, AppStatus, WorkerInfo } from '../../src/config/types';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { AppStatus, ControlResponse, WorkerInfo } from '../../src/config/types';
+
+afterAll(() => {
+  mock.restore();
+});
 
 // ---------------------------------------------------------------------------
 // Console Capture Utilities
@@ -81,10 +85,7 @@ function restoreExit(): void {
 // ---------------------------------------------------------------------------
 
 /** Create a minimal AppStatus for mock list responses. */
-function makeAppStatus(
-  name: string,
-  status: 'running' | 'stopped' = 'running',
-): AppStatus {
+function makeAppStatus(name: string, status: 'running' | 'stopped' = 'running'): AppStatus {
   return {
     name,
     status,
@@ -162,7 +163,7 @@ function buildConnectMock(opts: {
         return resultMap[cmd] ?? defaultResult;
       },
       sendStreamCommand: async () => {},
-      requireArg: (args: string[], label: string) => {
+      requireArg: (args: string[], _label: string) => {
         if (!args[0]) {
           process.exit(1);
           throw new Error('process.exit');
@@ -463,9 +464,7 @@ describe('startCommand', () => {
     await startCommand([], { config: 'config.ts' });
 
     expect(tracker.calls[0].args).toHaveProperty('config');
-    expect(
-      (tracker.calls[0].args as Record<string, unknown>).config,
-    ).toHaveProperty('name', 'api');
+    expect((tracker.calls[0].args as Record<string, unknown>).config).toHaveProperty('name', 'api');
   });
 
   test('exits with error for negative --instances value', async () => {
@@ -911,6 +910,18 @@ describe('restartCommand', () => {
 
     expect(tracker.calls).toHaveLength(1);
     expect(tracker.calls[0].args).toEqual({ name: 'my-complex-app-v2' });
+  });
+
+  test('passes force only when --force is set', async () => {
+    const tracker = buildConnectMock({});
+    mock.module('../../src/cli/commands/_connect', () => tracker.module);
+
+    const { restartCommand } = await import('../../src/cli/commands/restart');
+    captured = captureConsole();
+    await restartCommand(['my-app'], { force: true });
+
+    expect(tracker.calls).toHaveLength(1);
+    expect(tracker.calls[0].args).toEqual({ name: 'my-app', force: true });
   });
 });
 
@@ -1431,9 +1442,7 @@ describe('listCommand', () => {
 
   test('shows worker with null memory and cpu as dashes', async () => {
     const app = makeAppStatus('app', 'running');
-    app.workers = [
-      makeWorkerInfo({ id: 1, pid: 9999, memory: null, cpu: null }),
-    ];
+    app.workers = [makeWorkerInfo({ id: 1, pid: 9999, memory: null, cpu: null })];
     const tracker = buildConnectMock({
       defaultResult: { id: 'mock-id', ok: true, data: [app] },
     });

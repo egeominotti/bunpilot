@@ -5,9 +5,9 @@
 // Useful for testing the `readyTimeout` configuration option.
 // ---------------------------------------------------------------------------
 
-import { bunpilotReady, bunpilotOnShutdown, bunpilotStartMetrics } from '../src/sdk/worker';
+import { bunpilotOnShutdown, bunpilotReady, bunpilotStartMetrics } from '../src/sdk/worker';
 
-const PORT = Number(process.env.PORT) || 3002;
+const PORT = Number(process.env.BUNPILOT_PORT ?? process.env.PORT) || 3002;
 const STARTUP_DELAY_MS = 5_000;
 
 async function main() {

@@ -6,9 +6,9 @@
 // ControlClient creation, error handling, and response formatting logic.
 // ---------------------------------------------------------------------------
 
-import { ControlClient } from '../../control/client';
-import { SOCKET_PATH } from '../../constants';
 import type { ControlResponse, ControlStreamChunk } from '../../config/types';
+import { SOCKET_PATH } from '../../constants';
+import { ControlClient } from '../../control/client';
 import { logError, logSuccess } from '../format';
 
 // ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ import { logError, logSuccess } from '../format';
  * via the --socket flag if needed in the future.
  */
 export function createClient(socketPath?: string): ControlClient {
-  return new ControlClient(socketPath ?? SOCKET_PATH);
+  return new ControlClient(socketPath ?? process.env.BUNPILOT_SOCKET ?? SOCKET_PATH);
 }
 
 // ---------------------------------------------------------------------------

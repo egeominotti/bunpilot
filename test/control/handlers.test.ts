@@ -2,10 +2,10 @@
 // bunpilot – Control Handlers unit tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import {
-  createCommandHandlers,
   type CommandContext,
+  createCommandHandlers,
   type Handler,
 } from '../../src/control/handlers';
 
@@ -104,7 +104,13 @@ describe('handler: list', () => {
 
   test('returns ok with populated apps array', async () => {
     const fakeApps = [
-      { name: 'web', status: 'running' as const, workers: [], config: {} as any, startedAt: Date.now() },
+      {
+        name: 'web',
+        status: 'running' as const,
+        workers: [],
+        config: {} as any,
+        startedAt: Date.now(),
+      },
       { name: 'api', status: 'stopped' as const, workers: [], config: {} as any, startedAt: null },
     ];
     const ctx = createMockContext({ listApps: () => fakeApps });
@@ -463,7 +469,7 @@ describe('handler: logs', () => {
     expect(receivedLines).toBe(50);
   });
 
-  test('does not pass lines argument when it is not a number', async () => {
+  test('rejects lines when it is not a number', async () => {
     let receivedLines: number | undefined = 999;
     const ctx = createMockContext({
       getLogs: (_name, lines) => {
@@ -474,8 +480,9 @@ describe('handler: logs', () => {
     const handlers = createCommandHandlers(ctx);
     const handler = handlers.get('logs')!;
 
-    await handler({ name: 'web', lines: 'all' });
-    expect(receivedLines).toBeUndefined();
+    const response = await handler({ name: 'web', lines: 'all' });
+    expect(response.ok).toBe(false);
+    expect(receivedLines).toBe(999);
   });
 });
 
@@ -534,12 +541,7 @@ describe('handler: dump', () => {
 
 describe('handler: kill-daemon', () => {
   test('returns ok with shutting-down action', async () => {
-    let shutdownCalled = false;
-    const ctx = createMockContext({
-      shutdown: async () => {
-        shutdownCalled = true;
-      },
-    });
+    const ctx = createMockContext();
     const handlers = createCommandHandlers(ctx);
     const handler = handlers.get('kill-daemon')!;
 

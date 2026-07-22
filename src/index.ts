@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // ---------------------------------------------------------------------------
 // bunpilot – Main Entry Point
 // ---------------------------------------------------------------------------
@@ -7,9 +8,9 @@
 // Command modules are dynamically imported to keep startup fast.
 // ---------------------------------------------------------------------------
 
-import { parseArgs } from './cli/index';
 import { logError } from './cli/format';
-import { ensureBunpilotHome } from './constants';
+import { parseArgs } from './cli/index';
+import { VERSION } from './version';
 
 // ---------------------------------------------------------------------------
 // ANSI helpers (local — avoid pulling the full format module for help text)
@@ -18,12 +19,6 @@ import { ensureBunpilotHome } from './constants';
 const BOLD = '\x1b[1m';
 const GREEN = '\x1b[32m';
 const RESET = '\x1b[0m';
-
-// ---------------------------------------------------------------------------
-// Version
-// ---------------------------------------------------------------------------
-
-const VERSION = '0.2.1';
 
 // ---------------------------------------------------------------------------
 // Help Text
@@ -63,6 +58,7 @@ ${BOLD}Global Flags:${RESET}
   --version, -v               Show version number
   --json                      Output as JSON where supported
   --force                     Force the operation
+  --socket <path>             Override the daemon control socket
 `);
 }
 
@@ -75,8 +71,6 @@ function showVersion(): void {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  ensureBunpilotHome();
-
   const parsed = parseArgs(process.argv);
   const { command, args, flags } = parsed;
 
@@ -92,6 +86,15 @@ async function main(): Promise<void> {
   }
 
   try {
+    // Resolve the endpoint before lazily importing command modules.
+    if (typeof flags.socket === 'string') {
+      process.env.BUNPILOT_SOCKET = flags.socket;
+    } else if (typeof flags.config === 'string') {
+      const { loadConfig } = await import('./config/loader');
+      const config = await loadConfig(flags.config);
+      if (config.daemon?.socketFile) process.env.BUNPILOT_SOCKET = config.daemon.socketFile;
+    }
+
     switch (command) {
       // -- Process commands --------------------------------------------------
 
@@ -167,6 +170,12 @@ async function main(): Promise<void> {
       case 'ping': {
         const { pingCommand } = await import('./cli/commands/ping');
         await pingCommand(args, flags);
+        break;
+      }
+
+      case '__daemon': {
+        const { bootDaemon } = await import('./daemon/boot');
+        await bootDaemon(args[0]);
         break;
       }
 

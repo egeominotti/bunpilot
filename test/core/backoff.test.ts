@@ -2,9 +2,9 @@
 // bunpilot – CrashRecovery Unit Tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { CrashRecovery } from '../../src/core/backoff';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import type { AppConfig } from '../../src/config/types';
+import { CrashRecovery } from '../../src/core/backoff';
 
 // ---------------------------------------------------------------------------
 // Helper: minimal AppConfig used across all tests
@@ -115,7 +115,7 @@ describe('CrashRecovery', () => {
     test('after stable, next crash delay restarts from initial', () => {
       recovery.onWorkerCrash(1, config); // crash 1
       recovery.onWorkerCrash(1, config); // crash 2
-      recovery.onWorkerStable(1);        // stable -> reset consecutive
+      recovery.onWorkerStable(1); // stable -> reset consecutive
 
       recovery.onWorkerCrash(1, config); // crash 1 again (fresh curve)
       const state = recovery.getState(1)!;
@@ -183,6 +183,23 @@ describe('CrashRecovery', () => {
       expect(recovery.getState(1)!.restartsInWindow).toBe(1);
       expect(result).toBe('restart');
     });
+
+    test('starts a fresh restart window at the exact expiry boundary', () => {
+      const boundaryConfig = makeConfig({ maxRestartWindow: 1_000, maxRestarts: 1 });
+      const originalNow = Date.now;
+      let now = 10_000;
+      Date.now = () => now;
+
+      try {
+        expect(recovery.onWorkerCrash(1, boundaryConfig)).toBe('restart');
+        now += boundaryConfig.maxRestartWindow;
+
+        expect(recovery.onWorkerCrash(1, boundaryConfig)).toBe('restart');
+        expect(recovery.getState(1)?.restartsInWindow).toBe(1);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -199,6 +216,21 @@ describe('CrashRecovery', () => {
       // The delay should be positive and at most the initial backoff value
       expect(delay).toBeGreaterThan(0);
       expect(delay).toBeLessThanOrEqual(1_000);
+    });
+  });
+
+  describe('application namespaces', () => {
+    test('workers with the same numeric id in different apps keep independent crash state', () => {
+      recovery.onWorkerCrash(0, config, 'app-a');
+      recovery.onWorkerCrash(0, config, 'app-a');
+      recovery.onWorkerCrash(0, config, 'app-b');
+
+      expect(recovery.getState(0, 'app-a')?.consecutiveCrashes).toBe(2);
+      expect(recovery.getState(0, 'app-b')?.consecutiveCrashes).toBe(1);
+
+      recovery.reset(0, 'app-a');
+      expect(recovery.getState(0, 'app-a')).toBeUndefined();
+      expect(recovery.getState(0, 'app-b')).toBeDefined();
     });
   });
 });

@@ -6,9 +6,9 @@
 // resource usage, and uptime per worker.
 // ---------------------------------------------------------------------------
 
-import { sendCommand } from './_connect';
-import { formatTable, formatUptime, formatMemory, formatState, logWarn } from '../format';
 import type { AppStatus, WorkerInfo } from '../../config/types';
+import { formatMemory, formatState, formatTable, formatUptime, logWarn } from '../format';
+import { sendCommand } from './_connect';
 
 // ---------------------------------------------------------------------------
 // Command

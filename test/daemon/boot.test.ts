@@ -1,74 +1,30 @@
 // ---------------------------------------------------------------------------
-// bunpilot – Unit Tests for Daemon Boot: readLogLines logic
+// bunpilot – Unit Tests for daemon log reading and boot persistence logic
 // ---------------------------------------------------------------------------
 //
-// boot.ts is an entry point script that cannot be imported directly.
-// Instead, we replicate the readLogLines helper logic inline and test it
-// against real temp directories and log files.
+// The reader lives outside the daemon entry point so these tests exercise the
+// exact production implementation.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { readdirSync, readFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { readLogLines } from '../../src/logs/reader';
 
-// ---------------------------------------------------------------------------
-// Replicate readLogLines from boot.ts (private function, not exported)
-// ---------------------------------------------------------------------------
-
-/**
- * Extract the rotation index from a log filename.
- * - `app-0-out.log`   → -1  (current / newest)
- * - `app-0-out.0.log` → 0
- * - `app-0-out.2.log` → 2   (oldest)
- */
-function rotationIndex(filename: string): number {
-  const match = filename.match(/\.(\d+)\.log$/);
-  return match ? parseInt(match[1], 10) : -1;
-}
-
-/**
- * Compare rotated log filenames so oldest content comes first.
- */
-function compareRotatedLogs(a: string, b: string): number {
-  const idxA = rotationIndex(a);
-  const idxB = rotationIndex(b);
-
-  const baseA = a.replace(/(\.\d+)?\.log$/, '');
-  const baseB = b.replace(/(\.\d+)?\.log$/, '');
-
-  if (baseA !== baseB) return baseA.localeCompare(baseB);
-  return idxB - idxA;
-}
-
-function readLogLines(logsDir: string, appName: string, maxLines: number): string[] {
-  const appDir = join(logsDir, appName);
-  if (!existsSync(appDir)) return [];
-
-  const files = readdirSync(appDir)
-    .filter((f) => f.endsWith('.log'))
-    .sort(compareRotatedLogs)
-    .map((f) => join(appDir, f));
-
-  if (files.length === 0) return [];
-
-  const allLines: string[] = [];
-
-  for (const file of files) {
-    try {
-      const content = readFileSync(file, 'utf-8');
-      const lines = content.split('\n').filter((l) => l.length > 0);
-      allLines.push(...lines);
-    } catch {
-      // File may have been rotated/deleted
-    }
-  }
-
-  // Return last N lines
-  return allLines.slice(-maxLines);
-}
+describe('daemon runtime port compatibility', () => {
+  test('rejects a dynamically started app whose public port is the metrics port', async () => {
+    const bootModule = (await import('../../src/daemon/boot')) as Record<string, unknown>;
+    const assertCompatible = bootModule.assertAppCompatibleWithDaemon;
+    expect(typeof assertCompatible).toBe('function');
+    expect(() =>
+      (assertCompatible as (config: { port?: number }, metricsPort: number) => void)(
+        { port: 9_615 },
+        9_615,
+      ),
+    ).toThrow('metrics');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown
@@ -194,12 +150,10 @@ describe('readLogLines', () => {
     const appDir = join(tempDir, 'rotated-app');
     mkdirSync(appDir, { recursive: true });
 
-    // Rotated logs naming convention: base.log is newest, base.0.log is next,
-    // base.1.log is older, base.2.log is oldest.
-    // Chronological read order should be: .2 -> .1 -> .0 -> base (newest last)
-    writeFileSync(join(appDir, 'app-0-out.2.log'), 'oldest-line-1\noldest-line-2\n');
-    writeFileSync(join(appDir, 'app-0-out.1.log'), 'older-line-1\nolder-line-2\n');
-    writeFileSync(join(appDir, 'app-0-out.0.log'), 'old-line-1\nold-line-2\n');
+    // Rotation starts at .1; the highest suffix is the oldest file.
+    writeFileSync(join(appDir, 'app-0-out.3.log'), 'oldest-line-1\noldest-line-2\n');
+    writeFileSync(join(appDir, 'app-0-out.2.log'), 'older-line-1\nolder-line-2\n');
+    writeFileSync(join(appDir, 'app-0-out.1.log'), 'old-line-1\nold-line-2\n');
     writeFileSync(join(appDir, 'app-0-out.log'), 'newest-line-1\nnewest-line-2\n');
 
     const result = readLogLines(tempDir, 'rotated-app', 50);
@@ -222,9 +176,9 @@ describe('readLogLines', () => {
     mkdirSync(appDir, { recursive: true });
 
     // 3 lines per file, 4 files = 12 lines total
-    writeFileSync(join(appDir, 'app-0-out.2.log'), 'A1\nA2\nA3\n');
-    writeFileSync(join(appDir, 'app-0-out.1.log'), 'B1\nB2\nB3\n');
-    writeFileSync(join(appDir, 'app-0-out.0.log'), 'C1\nC2\nC3\n');
+    writeFileSync(join(appDir, 'app-0-out.3.log'), 'A1\nA2\nA3\n');
+    writeFileSync(join(appDir, 'app-0-out.2.log'), 'B1\nB2\nB3\n');
+    writeFileSync(join(appDir, 'app-0-out.1.log'), 'C1\nC2\nC3\n');
     writeFileSync(join(appDir, 'app-0-out.log'), 'D1\nD2\nD3\n');
 
     // Request only 4 lines — should come from the two newest files
@@ -237,11 +191,11 @@ describe('readLogLines', () => {
     mkdirSync(appDir, { recursive: true });
 
     // stdout and stderr rotated files
-    writeFileSync(join(appDir, 'app-0-out.1.log'), 'out-old-1\n');
-    writeFileSync(join(appDir, 'app-0-out.0.log'), 'out-recent-1\n');
+    writeFileSync(join(appDir, 'app-0-out.2.log'), 'out-old-1\n');
+    writeFileSync(join(appDir, 'app-0-out.1.log'), 'out-recent-1\n');
     writeFileSync(join(appDir, 'app-0-out.log'), 'out-current-1\n');
-    writeFileSync(join(appDir, 'app-0-err.1.log'), 'err-old-1\n');
-    writeFileSync(join(appDir, 'app-0-err.0.log'), 'err-recent-1\n');
+    writeFileSync(join(appDir, 'app-0-err.2.log'), 'err-old-1\n');
+    writeFileSync(join(appDir, 'app-0-err.1.log'), 'err-recent-1\n');
     writeFileSync(join(appDir, 'app-0-err.log'), 'err-current-1\n');
 
     const result = readLogLines(tempDir, 'mixed-rotate-app', 50);
@@ -256,11 +210,28 @@ describe('readLogLines', () => {
     const errIdx1 = result.indexOf('err-recent-1');
     const errIdx2 = result.indexOf('err-current-1');
 
-    // Within each group, order should be: oldest (.1) < recent (.0) < current (base)
+    // Within each group, order should be: oldest (.2) < recent (.1) < current.
     expect(outIdx0).toBeLessThan(outIdx1);
     expect(outIdx1).toBeLessThan(outIdx2);
     expect(errIdx0).toBeLessThan(errIdx1);
     expect(errIdx1).toBeLessThan(errIdx2);
+  });
+
+  test('finds safe nested custom log files', () => {
+    const nested = join(tempDir, 'nested-app', 'archive', 'daily');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, 'custom.log'), 'nested-line\n');
+
+    expect(readLogLines(tempDir, 'nested-app', 50)).toEqual(['nested-line']);
+  });
+
+  test('rejects app names that could escape the logs directory', () => {
+    const outside = join(tempDir, 'outside.log');
+    writeFileSync(outside, 'secret\n');
+
+    expect(readLogLines(tempDir, '..', 50)).toEqual([]);
+    expect(readLogLines(tempDir, '../outside', 50)).toEqual([]);
+    expect(readLogLines(tempDir, 'nested/app', 50)).toEqual([]);
   });
 });
 
@@ -378,9 +349,7 @@ describe('startApp handler – pendingConfigs lifecycle', () => {
 
     const handler = buildStartAppHandler(pendingConfigs, async () => {});
 
-    await expect(handler('missing-app')).rejects.toThrow(
-      'No config found for app "missing-app"',
-    );
+    await expect(handler('missing-app')).rejects.toThrow('No config found for app "missing-app"');
   });
 });
 
@@ -409,10 +378,7 @@ describe('config load error logging', () => {
         log(`[daemon] auto-starting "${app.name}" from config`);
       }
     } catch (err) {
-      warn(
-        '[daemon] config load failed:',
-        err instanceof Error ? err.message : String(err),
-      );
+      warn('[daemon] config load failed:', err instanceof Error ? err.message : String(err));
     }
   }
 

@@ -8,9 +8,9 @@
 // via `as any`.  This avoids mock.module pollution across test files.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { MasterOrchestrator } from '../../src/core/master';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AppConfig, WorkerInfo } from '../../src/config/types';
+import { MasterOrchestrator } from '../../src/core/master';
 import type { SpawnedWorker } from '../../src/core/process-manager';
 
 // ---------------------------------------------------------------------------
@@ -47,6 +47,7 @@ interface TestContext {
   heartbeatStaleCallbacks: Map<number, (wid: number) => void>;
   /** Whether isRunning should return true (simulates old process still running) */
   isRunningResult: boolean;
+  killError: Error | null;
   /** Tracking proxy method calls */
   proxyCalls: ProxyCall[];
 }
@@ -69,6 +70,7 @@ function createContext(): TestContext {
     messageCallbacks: new Map(),
     heartbeatStaleCallbacks: new Map(),
     isRunningResult: false,
+    killError: null,
     proxyCalls: [],
   };
 }
@@ -110,11 +112,11 @@ function makeClusteredConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 /** Create a mock ProxyCluster that records all calls */
 function createMockProxy(ctx: TestContext) {
   return {
-    start(publicPort: number, workerCount: number) {
-      ctx.proxyCalls.push({ method: 'start', args: [publicPort, workerCount] });
+    start(publicPort: number, workerCount: number, workerPorts?: ReadonlyMap<number, number>) {
+      ctx.proxyCalls.push({ method: 'start', args: [publicPort, workerCount, workerPorts] });
     },
-    addWorker(workerId: number) {
-      ctx.proxyCalls.push({ method: 'addWorker', args: [workerId] });
+    addWorker(workerId: number, port?: number) {
+      ctx.proxyCalls.push({ method: 'addWorker', args: [workerId, port] });
     },
     removeWorker(workerId: number) {
       ctx.proxyCalls.push({ method: 'removeWorker', args: [workerId] });
@@ -147,12 +149,21 @@ function stubMaster(master: MasterOrchestrator, ctx: TestContext): void {
       return {
         proc: {} as any,
         pid,
-        stdout: new ReadableStream({ start(c) { c.close(); } }),
-        stderr: new ReadableStream({ start(c) { c.close(); } }),
+        stdout: new ReadableStream({
+          start(c) {
+            c.close();
+          },
+        }),
+        stderr: new ReadableStream({
+          start(c) {
+            c.close();
+          },
+        }),
       };
     },
     async killWorker(pid: number, signal: string, timeout: number) {
       ctx.killCalls.push({ pid, signal, timeout });
+      if (ctx.killError) throw ctx.killError;
       return 'exited' as const;
     },
     isRunning() {
@@ -224,7 +235,7 @@ function stubMaster(master: MasterOrchestrator, ctx: TestContext): void {
   m.workerHandler = new WorkerHandler(m.processManager, m.crashRecovery, m.lifecycle);
 
   // Re-register the healthChecker onUnhealthy callback (constructor does this).
-  m.healthChecker.onUnhealthy((workerId: number, reason: string) => {
+  m.healthChecker.onUnhealthy((workerId: number, _reason: string) => {
     for (const [, managed] of m.apps) {
       const worker = m.workerHandler.findWorker(managed, workerId);
       if (worker && (worker.state === 'online' || worker.state === 'starting')) {
@@ -372,13 +383,65 @@ describe('MasterOrchestrator', () => {
       expect(master.startApp(config)).rejects.toThrow('App "dup-app" is already running.');
     });
 
-    test('starts health checking for each worker', async () => {
-      const config = makeConfig({ name: 'health-app', instances: 2 });
+    test('starts HTTP health checking only after each worker is ready', async () => {
+      const config = makeConfig({
+        name: 'health-app',
+        instances: 2,
+        port: 3_000,
+        healthCheck: {
+          enabled: true,
+          path: '/health',
+          interval: 30_000,
+          timeout: 5_000,
+          unhealthyThreshold: 3,
+        },
+      });
       await master.startApp(config);
+
+      expect(ctx.startCheckingCalls).toHaveLength(0);
+
+      ctx.messageCallbacks.get(0)!(0, { type: 'ready' });
+      ctx.messageCallbacks.get(1)!(1, { type: 'ready' });
 
       expect(ctx.startCheckingCalls.length).toBe(2);
       expect(ctx.startCheckingCalls[0].workerId).toBe(0);
       expect(ctx.startCheckingCalls[1].workerId).toBe(1);
+    });
+
+    test('does not start an HTTP health check for a ready worker without a port', async () => {
+      const config = makeConfig({
+        name: 'background-worker',
+        instances: 1,
+        healthCheck: {
+          enabled: true,
+          path: '/health',
+          interval: 30_000,
+          timeout: 5_000,
+          unhealthyThreshold: 1,
+        },
+      });
+      await master.startApp(config);
+      ctx.messageCallbacks.get(0)!(0, { type: 'ready' });
+
+      expect(ctx.startCheckingCalls).toHaveLength(0);
+    });
+
+    test('does not start HTTP health checks when explicitly disabled', async () => {
+      const config = makeConfig({
+        name: 'health-disabled',
+        port: 3_001,
+        healthCheck: {
+          enabled: false,
+          path: '/health',
+          interval: 30_000,
+          timeout: 5_000,
+          unhealthyThreshold: 1,
+        },
+      });
+      await master.startApp(config);
+      ctx.messageCallbacks.get(0)!(0, { type: 'ready' });
+
+      expect(ctx.startCheckingCalls).toHaveLength(0);
     });
 
     test('starts heartbeat monitoring for each worker', async () => {
@@ -549,6 +612,26 @@ describe('MasterOrchestrator', () => {
       const status = master.getAppStatus('restart-state-app');
       expect(status!.workers[0].state).toBe('starting');
     });
+
+    test('force restart escalates without waiting for the graceful timeout', async () => {
+      await master.startApp(makeConfig({ name: 'force-app', instances: 1 }));
+      await master.restartApp('force-app', true);
+      expect(ctx.killCalls[0].timeout).toBe(0);
+    });
+
+    test('a teardown failure does not leave the app permanently locked in stopping state', async () => {
+      await master.startApp(makeConfig({ name: 'retryable-restart', instances: 1 }));
+      ctx.killError = new Error('simulated kill failure');
+
+      await expect(master.restartApp('retryable-restart')).rejects.toThrow(
+        'simulated kill failure',
+      );
+      const managed = (master as any).apps.get('retryable-restart');
+      expect(managed.stopping).toBe(false);
+
+      ctx.killError = null;
+      await expect(master.restartApp('retryable-restart')).resolves.toBeUndefined();
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -707,6 +790,10 @@ describe('MasterOrchestrator', () => {
       const apps2 = master.listApps();
 
       expect(apps1[0].workers).not.toBe(apps2[0].workers);
+      apps1[0].workers[0].state = 'errored';
+      apps1[0].config.name = 'mutated';
+      expect(master.getAppStatus('copy-app')!.workers[0].state).toBe('starting');
+      expect(master.getAppStatus('copy-app')!.config.name).toBe('copy-app');
     });
 
     test('includes stopped apps that were not deleted', async () => {
@@ -919,6 +1006,15 @@ describe('MasterOrchestrator', () => {
       // Workers are in 'starting' (not online, not stopped)
       // The code path: no online, not allStopped => 'running'
       expect(status!.status).toBe('running');
+    });
+
+    test('treats epoch zero as a valid start timestamp for a workerless app', async () => {
+      await master.startApp(makeConfig({ name: 'epoch-app', instances: 1 }));
+      const managed = (master as any).apps.get('epoch-app');
+      managed.workers = [];
+      managed.startedAt = 0;
+
+      expect(master.getAppStatus('epoch-app')!.status).toBe('running');
     });
   });
 
@@ -1150,6 +1246,50 @@ describe('MasterOrchestrator', () => {
     });
   });
 
+  describe('worker launch generations and readiness', () => {
+    test('restarts a worker that never sends ready', async () => {
+      await master.startApp(
+        makeConfig({ name: 'ready-timeout-app', instances: 1, readyTimeout: 30 }),
+      );
+
+      for (let attempt = 0; attempt < 20; attempt++) {
+        if (ctx.spawnCalls.filter((call) => call.config.name === 'ready-timeout-app').length >= 2) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      ctx.messageCallbacks.get(0)!(0, { type: 'ready' });
+      expect(ctx.spawnCalls.filter((call) => call.config.name === 'ready-timeout-app').length).toBe(
+        2,
+      );
+    });
+
+    test('coalesces duplicate restart triggers for the same generation', async () => {
+      await master.startApp(makeConfig({ name: 'coalesce-app', instances: 1 }));
+      ctx.messageCallbacks.get(0)!(0, { type: 'ready' });
+      const stale = ctx.heartbeatStaleCallbacks.get(0)!;
+
+      stale(0);
+      stale(0);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(ctx.spawnCalls.filter((call) => call.config.name === 'coalesce-app').length).toBe(2);
+    });
+
+    test('ignores late messages from a superseded process generation', async () => {
+      await master.startApp(makeConfig({ name: 'generation-app', instances: 1 }));
+      const oldMessageCallback = ctx.messageCallbacks.get(0)!;
+      oldMessageCallback(0, { type: 'ready' });
+      ctx.heartbeatStaleCallbacks.get(0)!(0);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      const managed = (master as any).apps.get('generation-app');
+      expect(managed.workers[0].state).toBe('starting');
+      oldMessageCallback(0, { type: 'ready' });
+      expect(managed.workers[0].state).toBe('starting');
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Bug 6: restartApp doesn't clear backoff/stable timers
   // -------------------------------------------------------------------------
@@ -1162,7 +1302,10 @@ describe('MasterOrchestrator', () => {
       // Access internal managed app to check stable timers
       const m = master as any;
       const managed = m.apps.get('timer-clear-app');
-      expect(managed.stableTimers.size).toBeGreaterThan(0);
+      expect(managed.stableTimers.size).toBe(0);
+      expect(managed.readyTimers.size).toBe(1);
+      ctx.messageCallbacks.get(0)!(0, { type: 'ready' });
+      expect(managed.stableTimers.size).toBe(1);
 
       await master.restartApp('timer-clear-app');
 
@@ -1239,7 +1382,11 @@ describe('MasterOrchestrator', () => {
         name: 'cluster-port-app',
         instances: 4,
         port: 3000,
-        clustering: { enabled: true, strategy: 'auto', rollingRestart: { batchSize: 1, batchDelay: 1000 } },
+        clustering: {
+          enabled: true,
+          strategy: 'auto',
+          rollingRestart: { batchSize: 1, batchDelay: 1000 },
+        },
       });
       await master.startApp(config);
 
@@ -1286,8 +1433,51 @@ describe('MasterOrchestrator', () => {
       expect(startCalls[0].args[1]).toBe(2); // instances
     });
 
+    test('allocates disjoint internal worker ports across apps', async () => {
+      await master.startApp(makeClusteredConfig({ name: 'ports-a', port: 3100 }));
+      await master.startApp(makeClusteredConfig({ name: 'ports-b', port: 3200 }));
+
+      const m = master as any;
+      const portsA = new Set(m.apps.get('ports-a').workerPorts.values());
+      const portsB = [...m.apps.get('ports-b').workerPorts.values()];
+      expect(portsA.size).toBe(2);
+      expect(portsB).toHaveLength(2);
+      expect(portsB.every((port) => !portsA.has(port))).toBe(true);
+    });
+
+    test('never allocates a daemon-reserved port to a proxy worker', async () => {
+      const reservedMaster = new (MasterOrchestrator as any)([40_001]);
+      const reservedContext = createContext();
+      stubMaster(reservedMaster, reservedContext);
+
+      await reservedMaster.startApp(
+        makeClusteredConfig({ name: 'reserved-port-app', instances: 2 }),
+      );
+
+      const managed = (reservedMaster as any).apps.get('reserved-port-app');
+      expect(managed.workerPorts.get(0)).toBe(40_002);
+    });
+
+    test('rejects public ports already used or reserved internally', async () => {
+      await master.startApp(makeClusteredConfig({ name: 'owner', port: 3300 }));
+      await expect(
+        master.startApp(makeClusteredConfig({ name: 'duplicate-public', port: 3300 })),
+      ).rejects.toThrow('already used');
+
+      const m = master as any;
+      const reserved = [...m.apps.get('owner').workerPorts.values()][0];
+      await expect(
+        master.startApp(makeClusteredConfig({ name: 'internal-conflict', port: reserved })),
+      ).rejects.toThrow('already reserved');
+    });
+
     test('startApp does NOT create proxy for non-clustered app', async () => {
-      const config = makeConfig({ name: 'no-proxy-app', port: 3000, instances: 2 });
+      const config = makeConfig({
+        name: 'no-proxy-app',
+        port: 3000,
+        instances: 2,
+        clustering: { enabled: false, strategy: 'auto' },
+      });
       await master.startApp(config);
 
       const m = master as any;
@@ -1477,7 +1667,12 @@ describe('MasterOrchestrator', () => {
     });
 
     test('no proxy interaction for non-clustered app on ready/exit', async () => {
-      const config = makeConfig({ name: 'no-proxy-events', port: 3000, instances: 2 });
+      const config = makeConfig({
+        name: 'no-proxy-events',
+        port: 3000,
+        instances: 2,
+        clustering: { enabled: false, strategy: 'auto' },
+      });
       await master.startApp(config);
 
       ctx.proxyCalls = [];

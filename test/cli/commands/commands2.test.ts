@@ -12,8 +12,8 @@
 // directly.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -150,10 +150,12 @@ function makeAppStatus(overrides: Record<string, unknown> = {}) {
 // Mock helper: set up _connect mock with given sendCommand/requireArg
 // ---------------------------------------------------------------------------
 
-function mockConnect(overrides: {
-  sendCommand?: (...args: unknown[]) => Promise<unknown>;
-  requireArg?: (args: string[], label: string) => string;
-} = {}) {
+function mockConnect(
+  overrides: {
+    sendCommand?: (...args: unknown[]) => Promise<unknown>;
+    requireArg?: (args: string[], label: string) => string;
+  } = {},
+) {
   mock.module('../../../src/cli/commands/_connect', () => ({
     sendCommand: overrides.sendCommand ?? (async () => ({ id: '1', ok: true, data: null })),
     requireArg: overrides.requireArg ?? ((args: string[]) => args[0]),
@@ -280,9 +282,7 @@ describe('statusCommand', () => {
     captured = captureConsole();
     await statusCommand(['test-app'], {});
 
-    const portLogLine = captured.logs.find(
-      (l) => l.includes('port') && l.includes('3000'),
-    );
+    const portLogLine = captured.logs.find((l) => l.includes('port') && l.includes('3000'));
     expect(portLogLine).toBeUndefined();
   });
 
@@ -650,6 +650,20 @@ describe('metricsCommand', () => {
     expect(allOutput).toContain('pid="1234"');
   });
 
+  test('escapes app names in Prometheus label values', async () => {
+    const worker = makeWorkerInfo({ id: 0, pid: 1234, cpu: null, memory: null });
+    const apps = [makeAppStatus({ name: 'api"\\edge', workers: [worker] })];
+    mockConnect({
+      sendCommand: async () => ({ id: '1', ok: true, data: apps }),
+    });
+
+    const { metricsCommand } = await import('../../../src/cli/commands/metrics');
+    captured = captureConsole();
+    await metricsCommand([], { prometheus: true });
+
+    expect(captured.logs.join('\n')).toContain('app="api\\"\\\\edge"');
+  });
+
   test('prints "No metrics available" when apps array is empty', async () => {
     mockConnect({
       sendCommand: async () => ({ id: '1', ok: true, data: [] }),
@@ -831,6 +845,7 @@ describe('daemonCommand', () => {
     mock.module('../../../src/daemon/pid', () => ({
       readPidFile: () => null,
       isProcessRunning: () => false,
+      isBunpilotProcess: () => false,
       writePidFile: () => {},
       removePidFile: () => {},
     }));
@@ -849,6 +864,7 @@ describe('daemonCommand', () => {
     mock.module('../../../src/daemon/pid', () => ({
       readPidFile: () => 12345,
       isProcessRunning: (pid: number) => pid === 12345,
+      isBunpilotProcess: (pid: number) => pid === 12345,
       writePidFile: () => {},
       removePidFile: () => {},
     }));
@@ -867,6 +883,7 @@ describe('daemonCommand', () => {
     mock.module('../../../src/daemon/pid', () => ({
       readPidFile: () => 99999,
       isProcessRunning: () => false,
+      isBunpilotProcess: () => false,
       writePidFile: () => {},
       removePidFile: () => {},
     }));
@@ -922,6 +939,7 @@ describe('daemonCommand', () => {
     mock.module('../../../src/daemon/pid', () => ({
       readPidFile: () => 12345,
       isProcessRunning: () => true,
+      isBunpilotProcess: () => true,
       writePidFile: () => {},
       removePidFile: () => {},
     }));
@@ -946,6 +964,7 @@ describe('daemonCommand', () => {
     mock.module('../../../src/daemon/pid', () => ({
       readPidFile: () => null,
       isProcessRunning: () => false,
+      isBunpilotProcess: () => false,
       writePidFile: () => {},
       removePidFile: () => {},
     }));

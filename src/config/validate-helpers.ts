@@ -2,6 +2,7 @@
 // bunpilot – Validation Helpers & Sub-Config Validators
 // ---------------------------------------------------------------------------
 
+import { isAbsolute, normalize } from 'node:path';
 import {
   APP_DEFAULTS,
   DEFAULT_BACKOFF,
@@ -24,7 +25,9 @@ import type {
 // ---------------------------------------------------------------------------
 
 export function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const prototype = Object.getPrototypeOf(v);
+  return prototype === Object.prototype || prototype === null;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,9 +39,32 @@ export function assertString(
   field: string,
   context: string,
 ): asserts value is string {
-  if (typeof value !== 'string' || value.length === 0) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`[${context}] "${field}" must be a non-empty string.`);
   }
+}
+
+/** Validate an optional boolean without silently accepting misspellings. */
+function validateBoolean(value: unknown, field: string, ctx: string, fallback: boolean): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'boolean') {
+    throw new Error(`[${ctx}] "${field}" must be a boolean.`);
+  }
+  return value;
+}
+
+/** Validate an optional non-empty string. */
+export function validateOptionalString(
+  value: unknown,
+  field: string,
+  ctx: string,
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  assertString(value, field, ctx);
+  if (value.includes('\0')) {
+    throw new Error(`[${ctx}] "${field}" must not contain NUL characters.`);
+  }
+  return value;
 }
 
 export function assertNumber(
@@ -131,11 +157,17 @@ export function validateEnv(value: unknown, ctx: string): Record<string, string>
     throw new Error(`[${ctx}] "env" must be a plain object.`);
   }
   for (const [k, v] of Object.entries(value)) {
+    if (k.length === 0 || k.includes('=') || k.includes('\0')) {
+      throw new Error(`[${ctx}] environment variable name "${k}" is invalid.`);
+    }
     if (typeof v !== 'string') {
       throw new Error(`[${ctx}] "env.${k}" must be a string. Got ${typeof v}.`);
     }
+    if (v.includes('\0')) {
+      throw new Error(`[${ctx}] "env.${k}" must not contain NUL characters.`);
+    }
   }
-  return value as Record<string, string>;
+  return { ...(value as Record<string, string>) };
 }
 
 // ---------------------------------------------------------------------------
@@ -149,10 +181,10 @@ export function validateHealthCheck(raw: unknown, ctx: string): HealthCheckConfi
   }
 
   const config: HealthCheckConfig = {
-    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_HEALTH_CHECK.enabled,
+    enabled: validateBoolean(raw.enabled, 'healthCheck.enabled', ctx, DEFAULT_HEALTH_CHECK.enabled),
     path: (() => {
       const p =
-        typeof raw.path === 'string' && raw.path.length > 0 ? raw.path : DEFAULT_HEALTH_CHECK.path;
+        validateOptionalString(raw.path, 'healthCheck.path', ctx) ?? DEFAULT_HEALTH_CHECK.path;
       if (!p.startsWith('/')) {
         throw new Error(`[${ctx}] "healthCheck.path" must start with "/". Got "${p}".`);
       }
@@ -224,12 +256,18 @@ export function validateLogs(raw: unknown, ctx: string): LogsConfig {
       DEFAULT_LOGS.maxFiles,
   };
 
-  if (typeof raw.outFile === 'string' && raw.outFile.length > 0) {
-    result.outFile = raw.outFile;
+  const outFile = validateOptionalString(raw.outFile, 'logs.outFile', ctx);
+  const errFile = validateOptionalString(raw.errFile, 'logs.errFile', ctx);
+  for (const [field, filename] of [
+    ['logs.outFile', outFile],
+    ['logs.errFile', errFile],
+  ] as const) {
+    if (filename && (isAbsolute(filename) || normalize(filename).split(/[\\/]/).includes('..'))) {
+      throw new Error(`[${ctx}] "${field}" must stay inside the app log directory.`);
+    }
   }
-  if (typeof raw.errFile === 'string' && raw.errFile.length > 0) {
-    result.errFile = raw.errFile;
-  }
+  if (outFile) result.outFile = outFile;
+  if (errFile) result.errFile = errFile;
 
   return result;
 }
@@ -241,8 +279,13 @@ export function validateMetrics(raw: unknown, ctx: string): MetricsConfig {
   }
 
   const result: MetricsConfig = {
-    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_METRICS.enabled,
-    prometheus: typeof raw.prometheus === 'boolean' ? raw.prometheus : DEFAULT_METRICS.prometheus,
+    enabled: validateBoolean(raw.enabled, 'metrics.enabled', ctx, DEFAULT_METRICS.enabled),
+    prometheus: validateBoolean(
+      raw.prometheus,
+      'metrics.prometheus',
+      ctx,
+      DEFAULT_METRICS.prometheus,
+    ),
     collectInterval:
       validateBoundedNumber(raw.collectInterval, 'metrics.collectInterval', ctx, 1_000, 300_000) ??
       DEFAULT_METRICS.collectInterval,
@@ -285,6 +328,13 @@ export function validateClustering(raw: unknown, ctx: string): ClusteringConfig 
       : DEFAULT_CLUSTERING.strategy;
 
   let rollingRestart = { ...DEFAULT_CLUSTERING.rollingRestart };
+  if (
+    raw.rollingRestart !== undefined &&
+    raw.rollingRestart !== null &&
+    !isRecord(raw.rollingRestart)
+  ) {
+    throw new Error(`[${ctx}] "clustering.rollingRestart" must be an object.`);
+  }
   if (isRecord(raw.rollingRestart)) {
     rollingRestart = {
       batchSize:
@@ -309,7 +359,7 @@ export function validateClustering(raw: unknown, ctx: string): ClusteringConfig 
   }
 
   return {
-    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_CLUSTERING.enabled,
+    enabled: validateBoolean(raw.enabled, 'clustering.enabled', ctx, DEFAULT_CLUSTERING.enabled),
     strategy,
     rollingRestart,
   };

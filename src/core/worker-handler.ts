@@ -3,9 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import type { AppConfig, WorkerInfo, WorkerMessage, WorkerState } from '../config/types';
-import type { ProcessManager, SpawnedWorker } from './process-manager';
 import type { CrashRecovery } from './backoff';
 import type { WorkerLifecycle } from './lifecycle';
+import type { ProcessManager, SpawnedWorker } from './process-manager';
 
 // ---------------------------------------------------------------------------
 // Types shared with MasterOrchestrator
@@ -17,6 +17,11 @@ export interface ManagedApp {
   spawned: Map<number, SpawnedWorker>;
   startedAt: number | null;
   stableTimers: Map<number, ReturnType<typeof setTimeout>>;
+  readyTimers: Map<number, ReturnType<typeof setTimeout>>;
+  workerPorts: Map<number, number>;
+  launchTokens: Map<number, symbol>;
+  restartingWorkers: Set<number>;
+  stopping: boolean;
   nextWorkerId: number;
 }
 
@@ -25,7 +30,7 @@ export interface ManagedApp {
 // ---------------------------------------------------------------------------
 
 export class WorkerHandler {
-  private readonly backoffTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  private readonly backoffTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly processManager: ProcessManager,
@@ -48,13 +53,24 @@ export class WorkerHandler {
         break;
 
       case 'metrics':
-        worker.memory = { ...msg.payload.memory, timestamp: Date.now() };
-        worker.cpu = {
-          user: msg.payload.cpu.user,
-          system: msg.payload.cpu.system,
-          percentage: 0,
-          timestamp: Date.now(),
-        };
+        {
+          const timestamp = Date.now();
+          const previous = worker.cpu;
+          const cpuTotal = msg.payload.cpu.user + msg.payload.cpu.system;
+          const previousTotal = previous ? previous.user + previous.system : cpuTotal;
+          const elapsedMicros = previous ? (timestamp - previous.timestamp) * 1_000 : 0;
+          const deltaMicros = cpuTotal - previousTotal;
+          const percentage =
+            elapsedMicros > 0 && deltaMicros >= 0 ? (deltaMicros / elapsedMicros) * 100 : 0;
+
+          worker.memory = { ...msg.payload.memory, timestamp };
+          worker.cpu = {
+            user: msg.payload.cpu.user,
+            system: msg.payload.cpu.system,
+            percentage,
+            timestamp,
+          };
+        }
         break;
 
       case 'heartbeat':
@@ -80,6 +96,7 @@ export class WorkerHandler {
     worker.exitCode = exitCode;
     worker.signalCode = signalCode;
     this.clearStableTimer(managed, workerId);
+    this.clearReadyTimer(managed, workerId);
 
     // Graceful stop completes normally. M3 fix: a 'draining' worker must step
     // through 'stopping' first (draining -> stopped is not a valid transition),
@@ -99,7 +116,11 @@ export class WorkerHandler {
     worker.lastCrashAt = Date.now();
     worker.consecutiveCrashes += 1;
 
-    const decision = this.crashRecovery.onWorkerCrash(workerId, managed.config);
+    const decision = this.crashRecovery.onWorkerCrash(
+      workerId,
+      managed.config,
+      managed.config.name,
+    );
 
     if (decision === 'give-up') {
       this.transitionWorker(worker, 'errored');
@@ -107,20 +128,21 @@ export class WorkerHandler {
     }
 
     // Bug 5 fix: Clear existing backoff timer before setting a new one.
-    const existingTimer = this.backoffTimers.get(workerId);
+    const timerKey = this.workerKey(managed, workerId);
+    const existingTimer = this.backoffTimers.get(timerKey);
     if (existingTimer) {
       clearTimeout(existingTimer);
-      this.backoffTimers.delete(workerId);
+      this.backoffTimers.delete(timerKey);
     }
 
-    const delay = this.crashRecovery.getDelay(workerId);
+    const delay = this.crashRecovery.getDelay(workerId, managed.config.name);
     const timer = setTimeout(() => {
-      this.backoffTimers.delete(workerId);
+      this.backoffTimers.delete(timerKey);
       if (worker.state === 'crashed') {
         onRestart(managed, worker);
       }
     }, delay);
-    this.backoffTimers.set(workerId, timer);
+    this.backoffTimers.set(timerKey, timer);
   }
 
   // -----------------------------------------------------------------------
@@ -153,19 +175,22 @@ export class WorkerHandler {
       worker.state = 'stopped';
     }
     managed.spawned.delete(worker.id);
+    managed.launchTokens.delete(worker.id);
+    this.clearReadyTimer(managed, worker.id);
   }
 
   // -----------------------------------------------------------------------
   // Stop all workers for an app
   // -----------------------------------------------------------------------
 
-  async stopAllWorkers(managed: ManagedApp): Promise<void> {
+  async stopAllWorkers(managed: ManagedApp, force = false): Promise<void> {
     // Bug 5 fix: Clear all backoff timers to prevent stale restarts.
     for (const worker of managed.workers) {
-      const timer = this.backoffTimers.get(worker.id);
+      const timerKey = this.workerKey(managed, worker.id);
+      const timer = this.backoffTimers.get(timerKey);
       if (timer) {
         clearTimeout(timer);
-        this.backoffTimers.delete(worker.id);
+        this.backoffTimers.delete(timerKey);
       }
     }
 
@@ -193,7 +218,7 @@ export class WorkerHandler {
           await this.processManager.killWorker(
             spawned.pid,
             managed.config.shutdownSignal,
-            managed.config.killTimeout,
+            force ? 0 : managed.config.killTimeout,
           );
         }
 
@@ -201,11 +226,13 @@ export class WorkerHandler {
         worker.state = 'stopped';
         this.clearStableTimer(managed, worker.id);
         // Belt-and-suspenders: drop any backoff timer a mid-kill exit may have set.
-        this.clearBackoffTimer(worker.id);
+        this.clearBackoffTimer(worker.id, managed.config.name);
+        this.clearReadyTimer(managed, worker.id);
       }),
     );
 
     managed.spawned.clear();
+    managed.launchTokens.clear();
   }
 
   // -----------------------------------------------------------------------
@@ -217,7 +244,7 @@ export class WorkerHandler {
 
     const timer = setTimeout(() => {
       if (worker.state === 'online') {
-        this.crashRecovery.onWorkerStable(worker.id);
+        this.crashRecovery.onWorkerStable(worker.id, managed.config.name);
         worker.consecutiveCrashes = 0;
       }
     }, managed.config.minUptime);
@@ -233,12 +260,41 @@ export class WorkerHandler {
     }
   }
 
-  /** Clear a pending crash-backoff timer for a single worker, if any. */
-  clearBackoffTimer(workerId: number): void {
-    const timer = this.backoffTimers.get(workerId);
+  scheduleReadyTimeout(
+    managed: ManagedApp,
+    worker: WorkerInfo,
+    onTimeout: (worker: WorkerInfo) => void,
+  ): void {
+    this.clearReadyTimer(managed, worker.id);
+    const token = managed.launchTokens.get(worker.id);
+    const timer = setTimeout(() => {
+      managed.readyTimers.delete(worker.id);
+      if (
+        managed.launchTokens.get(worker.id) === token &&
+        worker.state === 'starting' &&
+        !managed.stopping
+      ) {
+        onTimeout(worker);
+      }
+    }, managed.config.readyTimeout);
+    managed.readyTimers.set(worker.id, timer);
+  }
+
+  clearReadyTimer(managed: ManagedApp, workerId: number): void {
+    const timer = managed.readyTimers.get(workerId);
     if (timer) {
       clearTimeout(timer);
-      this.backoffTimers.delete(workerId);
+      managed.readyTimers.delete(workerId);
+    }
+  }
+
+  /** Clear a pending crash-backoff timer for a single worker, if any. */
+  clearBackoffTimer(workerId: number, namespace: string = ''): void {
+    const timerKey = this.workerKeyFromNamespace(namespace, workerId);
+    const timer = this.backoffTimers.get(timerKey);
+    if (timer) {
+      clearTimeout(timer);
+      this.backoffTimers.delete(timerKey);
     }
   }
 
@@ -250,14 +306,23 @@ export class WorkerHandler {
     for (const [wid] of managed.stableTimers) {
       this.clearStableTimer(managed, wid);
     }
+    for (const [wid] of managed.readyTimers) {
+      this.clearReadyTimer(managed, wid);
+    }
     for (const w of managed.workers) {
+      this.crashRecovery.reset(w.id, managed.config.name);
+      // Preserve compatibility for callers that populated an unscoped
+      // CrashRecovery directly before handing it to this handler.
       this.crashRecovery.reset(w.id);
-      const timer = this.backoffTimers.get(w.id);
+      const timerKey = this.workerKey(managed, w.id);
+      const timer = this.backoffTimers.get(timerKey);
       if (timer) {
         clearTimeout(timer);
-        this.backoffTimers.delete(w.id);
+        this.backoffTimers.delete(timerKey);
       }
     }
+    managed.launchTokens.clear();
+    managed.restartingWorkers.clear();
   }
 
   // -----------------------------------------------------------------------
@@ -276,5 +341,13 @@ export class WorkerHandler {
 
   findWorker(managed: ManagedApp, workerId: number): WorkerInfo | undefined {
     return managed.workers.find((w) => w.id === workerId);
+  }
+
+  private workerKey(managed: ManagedApp, workerId: number): string {
+    return this.workerKeyFromNamespace(managed.config.name, workerId);
+  }
+
+  private workerKeyFromNamespace(namespace: string, workerId: number): string {
+    return `${namespace}\0${workerId}`;
   }
 }

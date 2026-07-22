@@ -2,21 +2,20 @@
 // bunpilot – Control Client unit tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach } from 'bun:test';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
-import { ControlClient } from '../../src/control/client';
-import { ControlServer } from '../../src/control/server';
-import {
-  createResponse,
-  createErrorResponse,
-  createStreamChunk,
-  encodeMessage,
-  decodeMessages,
-} from '../../src/control/protocol';
 import type { ControlStreamChunk } from '../../src/config/types';
+import { ControlClient } from '../../src/control/client';
+import {
+  createErrorResponse,
+  createResponse,
+  createStreamChunk,
+  decodeMessages,
+  encodeMessage,
+} from '../../src/control/protocol';
+import { ControlServer } from '../../src/control/server';
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown
@@ -73,15 +72,20 @@ function startRawStreamServer(
     unix: socketPath,
     socket: {
       open(socket) {
+        let requestId = '';
         const write = (msg: object) => {
-          socket.write(encodeMessage(msg));
+          const correlated = requestId && 'id' in msg ? { ...msg, id: requestId } : msg;
+          socket.write(encodeMessage(correlated));
         };
         const close = () => {
           socket.end();
         };
         // Parse incoming request first, then call onConnect
         // We need to wait for the client to send the request before replying
-        (socket as any)._onConnect = () => onConnect(write, close);
+        (socket as any)._onConnect = (id: string) => {
+          requestId = id;
+          onConnect(write, close);
+        };
       },
 
       data(socket, raw) {
@@ -90,7 +94,7 @@ function startRawStreamServer(
         if (messages.length > 0 && (socket as any)._onConnect) {
           const fn = (socket as any)._onConnect;
           (socket as any)._onConnect = null;
-          fn();
+          fn((messages[0] as { id?: string }).id ?? '');
         }
       },
 
@@ -269,9 +273,9 @@ describe('ControlClient', () => {
       const socketPath = join(dir, 'missing.sock');
       const client = new ControlClient(socketPath);
 
-      await expect(
-        client.sendStream('logs', undefined, () => {}),
-      ).rejects.toThrow('daemon is not running');
+      await expect(client.sendStream('logs', undefined, () => {})).rejects.toThrow(
+        'daemon is not running',
+      );
     });
   });
 
@@ -354,9 +358,7 @@ describe('ControlClient', () => {
 
       const client = new ControlClient(socketPath);
 
-      await expect(
-        client.sendStream('logs', undefined, () => {}),
-      ).rejects.toThrow('Unknown error');
+      await expect(client.sendStream('logs', undefined, () => {})).rejects.toThrow('Unknown error');
     });
 
     test('handles multiple chunks sent in a single write', async () => {
@@ -376,11 +378,12 @@ describe('ControlClient', () => {
             const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
             const messages = decodeMessages(text);
             if (messages.length > 0) {
+              const req = messages[0] as { id: string };
               // Send three chunks concatenated in one write
               const batch =
-                encodeMessage(createStreamChunk('req-1', { n: 1 })) +
-                encodeMessage(createStreamChunk('req-1', { n: 2 })) +
-                encodeMessage(createStreamChunk('req-1', { n: 3 }, true));
+                encodeMessage(createStreamChunk(req.id, { n: 1 })) +
+                encodeMessage(createStreamChunk(req.id, { n: 2 })) +
+                encodeMessage(createStreamChunk(req.id, { n: 3 }, true));
               socket.write(batch);
             }
           },
@@ -451,9 +454,7 @@ describe('ControlClient', () => {
               const req = msg as any;
               if (req.cmd && req.args) {
                 receivedArgs = req.args;
-                socket.write(
-                  encodeMessage(createStreamChunk(req.id, { echo: req.args }, true)),
-                );
+                socket.write(encodeMessage(createStreamChunk(req.id, { echo: req.args }, true)));
               }
             }
           },
@@ -651,9 +652,10 @@ describe('ControlClient', () => {
             const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
             const messages = decodeMessages(text);
             if (messages.length > 0) {
+              const req = messages[0] as { id: string };
               socket.write(
-                encodeMessage(createStreamChunk('req-1', { line: 'data' })) +
-                  encodeMessage(createStreamChunk('req-1', null, true)),
+                encodeMessage(createStreamChunk(req.id, { line: 'data' })) +
+                  encodeMessage(createStreamChunk(req.id, null, true)),
               );
             }
           },

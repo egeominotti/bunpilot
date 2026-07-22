@@ -2,13 +2,13 @@
 // bunpilot – IPC Protocol unit tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
-  isValidWorkerMessage,
-  isValidMasterMessage,
-  createShutdownMessage,
-  createPingMessage,
   createCollectMetricsMessage,
+  createPingMessage,
+  createShutdownMessage,
+  isValidMasterMessage,
+  isValidWorkerMessage,
 } from '../../src/ipc/protocol';
 
 describe('isValidWorkerMessage', () => {
@@ -22,6 +22,14 @@ describe('isValidWorkerMessage', () => {
 
   test('rejects "heartbeat" without uptime', () => {
     expect(isValidWorkerMessage({ type: 'heartbeat' })).toBe(false);
+  });
+
+  test('rejects non-finite and negative heartbeat uptime', () => {
+    expect(isValidWorkerMessage({ type: 'heartbeat', uptime: Number.NaN })).toBe(false);
+    expect(isValidWorkerMessage({ type: 'heartbeat', uptime: Number.POSITIVE_INFINITY })).toBe(
+      false,
+    );
+    expect(isValidWorkerMessage({ type: 'heartbeat', uptime: -1 })).toBe(false);
   });
 
   test('accepts a valid "metrics" message with full payload', () => {
@@ -64,6 +72,26 @@ describe('isValidWorkerMessage', () => {
     expect(isValidWorkerMessage(msg)).toBe(false);
   });
 
+  test('rejects negative and non-finite metrics', () => {
+    const payload = {
+      memory: { rss: 1, heapTotal: 2, heapUsed: 3, external: 4 },
+      cpu: { user: 5, system: 6 },
+    };
+
+    expect(
+      isValidWorkerMessage({
+        type: 'metrics',
+        payload: { ...payload, memory: { ...payload.memory, rss: Number.NaN } },
+      }),
+    ).toBe(false);
+    expect(
+      isValidWorkerMessage({
+        type: 'metrics',
+        payload: { ...payload, cpu: { ...payload.cpu, user: -1 } },
+      }),
+    ).toBe(false);
+  });
+
   test('accepts a valid "custom" message with channel', () => {
     expect(isValidWorkerMessage({ type: 'custom', channel: 'my-channel', data: {} })).toBe(true);
   });
@@ -104,6 +132,13 @@ describe('isValidMasterMessage', () => {
 
   test('rejects "shutdown" with negative timeout', () => {
     expect(isValidMasterMessage({ type: 'shutdown', timeout: -1 })).toBe(false);
+  });
+
+  test('rejects "shutdown" with non-finite timeout', () => {
+    expect(isValidMasterMessage({ type: 'shutdown', timeout: Number.NaN })).toBe(false);
+    expect(isValidMasterMessage({ type: 'shutdown', timeout: Number.POSITIVE_INFINITY })).toBe(
+      false,
+    );
   });
 
   test('accepts a valid "ping" message', () => {

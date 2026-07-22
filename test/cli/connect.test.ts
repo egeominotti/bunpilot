@@ -9,21 +9,20 @@
 //   - Tests that load _connect functions detect mock pollution and adapt
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach, spyOn } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-
-import { ControlClient } from '../../src/control/client';
-import { ControlServer } from '../../src/control/server';
-import {
-  createResponse,
-  createErrorResponse,
-  createStreamChunk,
-  encodeMessage,
-  decodeMessages,
-} from '../../src/control/protocol';
 import type { ControlStreamChunk } from '../../src/config/types';
+import { ControlClient } from '../../src/control/client';
+import {
+  createErrorResponse,
+  createResponse,
+  createStreamChunk,
+  decodeMessages,
+  encodeMessage,
+} from '../../src/control/protocol';
+import { ControlServer } from '../../src/control/server';
 
 // ---------------------------------------------------------------------------
 // Load _connect module (may be mocked by commands2.test.ts)
@@ -117,13 +116,18 @@ function startRawStreamServer(
     unix: socketPath,
     socket: {
       open(socket) {
+        let requestId = '';
         const write = (msg: object) => {
-          socket.write(encodeMessage(msg));
+          const correlated = requestId && 'id' in msg ? { ...msg, id: requestId } : msg;
+          socket.write(encodeMessage(correlated));
         };
         const close = () => {
           socket.end();
         };
-        (socket as any)._onConnect = () => onConnect(write, close);
+        (socket as any)._onConnect = (id: string) => {
+          requestId = id;
+          onConnect(write, close);
+        };
       },
 
       data(socket, raw) {
@@ -132,7 +136,7 @@ function startRawStreamServer(
         if (messages.length > 0 && (socket as any)._onConnect) {
           const fn = (socket as any)._onConnect;
           (socket as any)._onConnect = null;
-          fn();
+          fn((messages[0] as { id?: string }).id ?? '');
         }
       },
 
@@ -385,9 +389,9 @@ describe('sendCommand – error paths', () => {
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
     try {
-      await expect(
-        sendCommand('stop', { name: 'my-app', force: true }),
-      ).rejects.toThrow('process.exit');
+      await expect(sendCommand('stop', { name: 'my-app', force: true })).rejects.toThrow(
+        'process.exit',
+      );
       expect(exit.calls).toContain(1);
     } finally {
       exit.restore();
@@ -402,9 +406,9 @@ describe('sendCommand – error paths', () => {
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
     try {
-      await expect(
-        sendCommand('ping', undefined, { silent: true }),
-      ).rejects.toThrow('process.exit');
+      await expect(sendCommand('ping', undefined, { silent: true })).rejects.toThrow(
+        'process.exit',
+      );
       expect(exit.calls).toContain(1);
     } finally {
       exit.restore();
@@ -509,9 +513,9 @@ describe('sendStreamCommand – error paths', () => {
     const socketPath = join(dir, 'missing.sock');
     const client = new ControlClient(socketPath);
 
-    await expect(
-      client.sendStream('logs', undefined, () => {}),
-    ).rejects.toThrow('daemon is not running');
+    await expect(client.sendStream('logs', undefined, () => {})).rejects.toThrow(
+      'daemon is not running',
+    );
   });
 
   test('sendStreamCommand exits with code 1 on connection failure', async () => {
@@ -544,9 +548,7 @@ describe('sendStreamCommand – error paths', () => {
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
     try {
-      await expect(
-        sendStreamCommand('logs', undefined, () => {}),
-      ).rejects.toThrow('process.exit');
+      await expect(sendStreamCommand('logs', undefined, () => {})).rejects.toThrow('process.exit');
 
       expect(errorSpy).toHaveBeenCalled();
       const errorOutput = errorSpy.mock.calls[0][0] as string;
@@ -564,9 +566,7 @@ describe('sendStreamCommand – error paths', () => {
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
     try {
-      await expect(
-        sendStreamCommand('monit', undefined, () => {}),
-      ).rejects.toThrow('process.exit');
+      await expect(sendStreamCommand('monit', undefined, () => {})).rejects.toThrow('process.exit');
 
       expect(exit.calls).toContain(1);
     } finally {

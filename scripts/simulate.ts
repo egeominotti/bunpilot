@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // ---------------------------------------------------------------------------
 // bunpilot – Full Simulation Script
 // ---------------------------------------------------------------------------
@@ -7,28 +8,31 @@
 // Does NOT require the daemon – exercises internal APIs directly.
 // ---------------------------------------------------------------------------
 
-import { WorkerLifecycle } from '../src/core/lifecycle';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { detectStrategy } from '../src/cluster/platform';
+import { resolveInstances, validateConfig } from '../src/config/validator';
+import { ControlClient } from '../src/control/client';
+import {
+  createRequest,
+  createResponse,
+  decodeMessages,
+  encodeMessage,
+} from '../src/control/protocol';
+import { ControlServer } from '../src/control/server';
 import { CrashRecovery } from '../src/core/backoff';
+import { WorkerLifecycle } from '../src/core/lifecycle';
 import { ProcessManager } from '../src/core/process-manager';
-import { SqliteStore } from '../src/store/sqlite';
-import { LogWriter } from '../src/logs/writer';
-import { LogManager } from '../src/logs/manager';
+import { HealthChecker } from '../src/health/checker';
+import { LogWriter, rotatedLogPath } from '../src/logs/writer';
 import { MetricsAggregator } from '../src/metrics/aggregator';
 import { formatPrometheus } from '../src/metrics/prometheus';
-import { HealthChecker } from '../src/health/checker';
-import { ControlServer } from '../src/control/server';
-import { ControlClient } from '../src/control/client';
-import { validateConfig, resolveInstances } from '../src/config/validator';
-import { detectStrategy } from '../src/cluster/platform';
-import { encodeMessage, decodeMessages, createRequest, createResponse } from '../src/control/protocol';
-import { mkdirSync, existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { SqliteStore } from '../src/store/sqlite';
 
 const BOLD = '\x1b[1m';
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
-const YELLOW = '\x1b[33m';
 const RESET = '\x1b[0m';
 
 let passed = 0;
@@ -66,7 +70,7 @@ async function checkAsync(label: string, fn: () => Promise<void>): Promise<void>
   }
 }
 
-function assert(condition: boolean, msg: string): void {
+function assert(condition: unknown, msg: string): asserts condition {
   if (!condition) throw new Error(msg);
 }
 
@@ -81,7 +85,10 @@ check('validateConfig with single app', () => {
   });
   assert(cfg.apps.length === 1, 'Expected 1 app');
   assert(cfg.apps[0].name === 'my-app', 'Wrong app name');
-  assert(cfg.apps[0].maxRestarts === 15, `Default maxRestarts should be 15, got ${cfg.apps[0].maxRestarts}`);
+  assert(
+    cfg.apps[0].maxRestarts === 15,
+    `Default maxRestarts should be 15, got ${cfg.apps[0].maxRestarts}`,
+  );
 });
 
 check('validateConfig single-app shorthand', () => {
@@ -159,7 +166,8 @@ check('exponential backoff', () => {
   const r1 = cr.onWorkerCrash(0, cfg);
   assert(r1 === 'restart', 'First crash should return restart');
 
-  const state = cr.getState(0)!;
+  const state = cr.getState(0);
+  assert(state !== null, 'Crash state should exist');
   assert(state.consecutiveCrashes === 1, `Expected 1 crash, got ${state.consecutiveCrashes}`);
 });
 
@@ -270,7 +278,7 @@ check('CRUD operations', () => {
   store.saveApp('db-test', appCfg);
   const app = store.getApp('db-test');
   assert(app !== null, 'App should exist');
-  assert(app!.name === 'db-test', 'Wrong name');
+  assert(app?.name === 'db-test', 'Wrong name');
 
   // Workers
   store.saveWorker('db-test', 0, 'online', 1234);
@@ -281,7 +289,7 @@ check('CRUD operations', () => {
   // Status update
   store.updateAppStatus('db-test', 'running');
   const updated = store.getApp('db-test');
-  assert(updated!.status === 'running', 'Status should be updated');
+  assert(updated?.status === 'running', 'Status should be updated');
 
   // Restart history
   store.addRestartEntry('db-test', 0, 1234, 1, null, 5000, 'crash');
@@ -317,7 +325,7 @@ await checkAsync('write and rotate logs', async () => {
   await writer.write('Line 3: after rotation\n');
 
   assert(existsSync(logPath), 'Current log should exist');
-  assert(existsSync(`${logPath}.1`), 'Rotated .1 should exist');
+  assert(existsSync(rotatedLogPath(logPath, 1)), 'Rotated .1.log should exist');
 
   writer.close();
   rmSync(tmpDir, { recursive: true, force: true });
@@ -338,7 +346,7 @@ check('aggregate and format prometheus', () => {
 
   const m = agg.getMetrics(0);
   assert(m !== null, 'Metrics should exist');
-  assert(m!.memory.rss === 50_000_000, 'RSS should match');
+  assert(m?.memory.rss === 50_000_000, 'RSS should match');
 
   // Prometheus format
   const output = formatPrometheus([
@@ -347,9 +355,9 @@ check('aggregate and format prometheus', () => {
       workers: [
         {
           workerId: 0,
-          metrics: m!,
+          metrics: m,
           restartCount: 2,
-          uptime: 60_000,
+          uptime: 60,
           state: 'online',
         },
       ],
@@ -393,8 +401,8 @@ await checkAsync('server accepts connections and responds', async () => {
   mkdirSync(tmpDir, { recursive: true });
   const socketPath = join(tmpDir, 'test.sock');
 
-  const server = new ControlServer(socketPath, async (req) => {
-    return createResponse(req.id, { pong: true, cmd: req.cmd });
+  const server = new ControlServer(socketPath, async (cmd) => {
+    return createResponse('', { pong: true, cmd });
   });
 
   await server.start();

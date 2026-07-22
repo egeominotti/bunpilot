@@ -5,9 +5,9 @@
 // Stop a running application by name.
 // ---------------------------------------------------------------------------
 
-import { sendCommand, requireArg } from './_connect';
 import type { AppStatus } from '../../config/types';
 import { logWarn } from '../format';
+import { requireArg, sendCommand } from './_connect';
 
 // ---------------------------------------------------------------------------
 // Command

@@ -6,9 +6,9 @@
 // and a per-worker breakdown.
 // ---------------------------------------------------------------------------
 
-import { sendCommand, requireArg } from './_connect';
-import { formatTable, formatUptime, formatMemory, formatState, log } from '../format';
 import type { AppStatus, WorkerInfo } from '../../config/types';
+import { formatMemory, formatState, formatTable, formatUptime, log } from '../format';
+import { requireArg, sendCommand } from './_connect';
 
 // ---------------------------------------------------------------------------
 // Command

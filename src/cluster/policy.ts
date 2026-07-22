@@ -19,10 +19,10 @@ export function resolveInstances(value: number | 'max'): number {
 
 /** Whether an app should run behind the userland TCP proxy cluster. */
 export function shouldUseProxy(config: AppConfig, instances: number): boolean {
-  if (!config.clustering?.enabled) return false;
+  if (config.clustering?.enabled === false) return false;
   if (instances <= 1) return false;
   if (config.port === undefined) return false;
-  return detectStrategy(config.clustering.strategy ?? 'auto') === 'proxy';
+  return detectStrategy(config.clustering?.strategy ?? 'auto') === 'proxy';
 }
 
 /**
@@ -31,7 +31,8 @@ export function shouldUseProxy(config: AppConfig, instances: number): boolean {
  * port-release delay.
  */
 export function bindsWithReusePort(config: AppConfig): boolean {
-  const clustered = config.clustering?.enabled === true && resolveInstances(config.instances) !== 1;
+  const clustered =
+    config.clustering?.enabled !== false && resolveInstances(config.instances) !== 1;
   if (!clustered) return false;
   return detectStrategy(config.clustering?.strategy ?? 'auto') === 'reusePort';
 }
@@ -48,7 +49,7 @@ export function bindsWithReusePort(config: AppConfig): boolean {
  * - otherwise             -> `config.port` (may be undefined)
  */
 export function resolveWorkerPort(config: AppConfig, workerId: number): number | undefined {
-  const isClustered = config.clustering?.enabled === true && config.instances !== 1;
+  const isClustered = config.clustering?.enabled !== false && config.instances !== 1;
   if (isClustered && config.port !== undefined) {
     const strategy = detectStrategy(config.clustering?.strategy ?? 'auto');
     return strategy === 'reusePort' ? config.port : INTERNAL_PORT_BASE + workerId;

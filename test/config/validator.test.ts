@@ -2,8 +2,8 @@
 // bunpilot – Unit Tests for Config Validator
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
-import { validateApp, validateConfig, resolveInstances } from '../../src/config/validator';
+import { describe, expect, test } from 'bun:test';
+import { resolveInstances, validateApp, validateConfig } from '../../src/config/validator';
 
 // ---------------------------------------------------------------------------
 // resolveInstances
@@ -44,6 +44,11 @@ describe('validateApp', () => {
     expect(result.maxRestartWindow).toBe(900_000);
     expect(result.readyTimeout).toBe(30_000);
     expect(result.instances).toBe(1);
+    expect(result.healthCheck).toBeDefined();
+    expect(result.logs).toBeDefined();
+    expect(result.metrics).toBeDefined();
+    expect(result.clustering).toBeDefined();
+    expect(result.clustering?.enabled).toBe(true);
   });
 
   test('applies default backoff config', () => {
@@ -65,7 +70,12 @@ describe('validateApp', () => {
       cwd: '/app',
       instances: 4,
       healthCheck: { enabled: true, path: '/healthz', interval: 10_000, timeout: 2_000 },
-      logs: { outFile: '/tmp/out.log', errFile: '/tmp/err.log', maxSize: 5_000_000, maxFiles: 3 },
+      logs: {
+        outFile: 'archive/out.log',
+        errFile: 'archive/err.log',
+        maxSize: 5_000_000,
+        maxFiles: 3,
+      },
       metrics: { enabled: true, prometheus: true, collectInterval: 10_000, httpPort: 9100 },
       clustering: { enabled: true, strategy: 'reusePort' },
     });
@@ -77,7 +87,7 @@ describe('validateApp', () => {
     expect(result.healthCheck).toBeDefined();
     expect(result.healthCheck!.path).toBe('/healthz');
     expect(result.logs).toBeDefined();
-    expect(result.logs!.outFile).toBe('/tmp/out.log');
+    expect(result.logs!.outFile).toBe('archive/out.log');
     expect(result.metrics).toBeDefined();
     expect(result.metrics!.prometheus).toBe(true);
     expect(result.clustering).toBeDefined();
@@ -161,6 +171,38 @@ describe('validateApp', () => {
     expect(result.maxRestarts).toBe(50);
     expect(result.killTimeout).toBe(10_000);
   });
+
+  test('rejects fractional integer-only lifecycle values', () => {
+    expect(() => validateApp({ name: 'app', script: 'index.ts', maxRestarts: 1.5 })).toThrow(
+      'must be an integer',
+    );
+    expect(() => validateApp({ name: 'app', script: 'index.ts', minUptime: 1_000.5 })).toThrow(
+      'must be an integer',
+    );
+  });
+
+  test('rejects app names that can escape the log directory', () => {
+    expect(() => validateApp({ name: '../escape', script: 'index.ts' })).toThrow(
+      'must not contain path separators',
+    );
+    expect(() => validateApp({ name: '..', script: 'index.ts' })).toThrow(
+      'must not be "." or ".."',
+    );
+  });
+
+  test('rejects control characters and unbounded app names', () => {
+    expect(() => validateApp({ name: 'api\nforged', script: 'index.ts' })).toThrow(
+      'control characters',
+    );
+    expect(() => validateApp({ name: 'a'.repeat(129), script: 'index.ts' })).toThrow('at most 128');
+  });
+
+  test('rejects invalid explicit optional strings', () => {
+    expect(() => validateApp({ name: 'app', script: 'index.ts', cwd: 42 })).toThrow('"cwd"');
+    expect(() => validateApp({ name: 'app', script: 'index.ts', interpreter: '' })).toThrow(
+      '"interpreter"',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -242,10 +284,64 @@ describe('validateConfig', () => {
     expect(result.apps[2].name).toBe('cron');
   });
 
+  test('rejects different metrics ports for enabled apps in one daemon', () => {
+    expect(() =>
+      validateConfig({
+        apps: [
+          { name: 'api', script: 'api.ts', metrics: { enabled: true, httpPort: 9100 } },
+          { name: 'jobs', script: 'jobs.ts', metrics: { enabled: true, httpPort: 9200 } },
+        ],
+      }),
+    ).toThrow('different metrics ports');
+  });
+
+  test('allows different metrics ports when only one app enables metrics', () => {
+    expect(() =>
+      validateConfig({
+        apps: [
+          { name: 'api', script: 'api.ts', metrics: { enabled: true, httpPort: 9100 } },
+          { name: 'jobs', script: 'jobs.ts', metrics: { enabled: false, httpPort: 9200 } },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  test('rejects an app public port that collides with the daemon metrics listener', () => {
+    expect(() =>
+      validateConfig({
+        apps: [{ name: 'api', script: 'api.ts', port: 9_615 }],
+      }),
+    ).toThrow('metrics');
+  });
+
+  test('rejects log templates that collide across worker streams', () => {
+    expect(() =>
+      validateConfig({
+        apps: [
+          {
+            name: 'api',
+            script: 'api.ts',
+            instances: 2,
+            logs: { outFile: 'combined.log', errFile: 'combined-1.log' },
+          },
+        ],
+      }),
+    ).toThrow('log files');
+  });
+
   test('config without daemon key omits daemon property', () => {
     const result = validateConfig({
       apps: [{ name: 'a', script: 's.ts' }],
     });
     expect(result.daemon).toBeUndefined();
+  });
+
+  test('rejects malformed daemon configuration instead of silently ignoring it', () => {
+    expect(() =>
+      validateConfig({ apps: [{ name: 'a', script: 'a.ts' }], daemon: 'invalid' }),
+    ).toThrow('"daemon" must be an object');
+    expect(() =>
+      validateConfig({ apps: [{ name: 'a', script: 'a.ts' }], daemon: { pidFile: 42 } }),
+    ).toThrow('"daemon.pidFile"');
   });
 });

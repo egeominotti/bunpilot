@@ -6,9 +6,9 @@
 // and removed from the process list.
 // ---------------------------------------------------------------------------
 
-import { sendCommand, requireArg } from './_connect';
 import type { AppStatus } from '../../config/types';
 import { logWarn } from '../format';
+import { requireArg, sendCommand } from './_connect';
 
 // ---------------------------------------------------------------------------
 // Command

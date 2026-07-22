@@ -3,8 +3,10 @@
 // ---------------------------------------------------------------------------
 
 import { Database } from 'bun:sqlite';
-import { DB_PATH } from '../constants';
+import { chmodSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { AppConfig } from '../config/types';
+import { DB_PATH } from '../constants';
 
 // ---------------------------------------------------------------------------
 // Record types returned by queries
@@ -37,9 +39,12 @@ export interface RestartRecord {
 
 export class SqliteStore {
   private readonly db: Database;
+  private closed = false;
 
   constructor(dbPath: string = DB_PATH) {
+    if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
     this.db = new Database(dbPath, { create: true });
+    if (dbPath !== ':memory:') chmodSync(dbPath, 0o600);
     this.init();
   }
 
@@ -60,8 +65,8 @@ export class SqliteStore {
         config_json TEXT NOT NULL,
         status      TEXT NOT NULL DEFAULT 'stopped',
         config_path TEXT,
-        created_at  INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000),
-        updated_at  INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000)
+        created_at  INTEGER NOT NULL DEFAULT (unixepoch('subsec') * 1000),
+        updated_at  INTEGER NOT NULL DEFAULT (unixepoch('subsec') * 1000)
       )
     `);
 
@@ -71,7 +76,7 @@ export class SqliteStore {
         worker_id   INTEGER NOT NULL,
         state       TEXT    NOT NULL DEFAULT 'stopped',
         pid         INTEGER,
-        started_at  INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000),
+        started_at  INTEGER NOT NULL DEFAULT (unixepoch('subsec') * 1000),
         extra_json  TEXT,
         PRIMARY KEY (app_name, worker_id)
       )
@@ -87,7 +92,7 @@ export class SqliteStore {
         signal      TEXT,
         uptime_ms   INTEGER NOT NULL,
         reason      TEXT    NOT NULL,
-        created_at  INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000)
+        created_at  INTEGER NOT NULL DEFAULT (unixepoch('subsec') * 1000)
       )
     `);
 
@@ -100,7 +105,7 @@ export class SqliteStore {
         heap_used    INTEGER NOT NULL,
         cpu_percent  REAL    NOT NULL,
         event_loop_lag REAL,
-        created_at   INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000)
+        created_at   INTEGER NOT NULL DEFAULT (unixepoch('subsec') * 1000)
       )
     `);
 
@@ -126,7 +131,7 @@ export class SqliteStore {
       ON CONFLICT(name) DO UPDATE SET
         config_json = excluded.config_json,
         config_path = excluded.config_path,
-        updated_at  = unixepoch('now') * 1000
+        updated_at  = unixepoch('subsec') * 1000
     `);
     stmt.run(name, JSON.stringify(config), configPath ?? null);
   }
@@ -151,8 +156,11 @@ export class SqliteStore {
   }
 
   updateAppStatus(name: string, status: string): void {
+    if (!['running', 'stopped', 'errored'].includes(status)) {
+      throw new Error(`Invalid app status: ${status}`);
+    }
     const stmt = this.db.prepare(
-      "UPDATE apps SET status = ?1, updated_at = unixepoch('now') * 1000 WHERE name = ?2",
+      "UPDATE apps SET status = ?1, updated_at = unixepoch('subsec') * 1000 WHERE name = ?2",
     );
     stmt.run(status, name);
   }
@@ -179,7 +187,7 @@ export class SqliteStore {
         state = excluded.state,
         pid   = excluded.pid,
         started_at = CASE
-          WHEN excluded.pid != workers.pid THEN unixepoch('now') * 1000
+          WHEN excluded.pid IS NOT workers.pid THEN unixepoch('subsec') * 1000
           ELSE workers.started_at
         END
     `);
@@ -221,6 +229,9 @@ export class SqliteStore {
   }
 
   getRestartHistory(appName: string, limit: number = 50): RestartRecord[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+      throw new Error('limit must be an integer between 1 and 10000');
+    }
     const stmt = this.db.prepare(
       'SELECT * FROM restart_history WHERE app_name = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2',
     );
@@ -251,12 +262,18 @@ export class SqliteStore {
   // -------------------------------------------------------------------------
 
   cleanupOldMetrics(retentionMs: number): void {
+    if (!Number.isFinite(retentionMs) || retentionMs < 0) {
+      throw new Error('retentionMs must be a non-negative finite number');
+    }
     const cutoff = Date.now() - retentionMs;
     const stmt = this.db.prepare('DELETE FROM metrics WHERE created_at < ?1');
     stmt.run(cutoff);
   }
 
   cleanupOldRestarts(maxEntries: number): void {
+    if (!Number.isSafeInteger(maxEntries) || maxEntries < 0) {
+      throw new Error('maxEntries must be a non-negative integer');
+    }
     const stmt = this.db.prepare(`
       DELETE FROM restart_history
       WHERE id NOT IN (
@@ -274,6 +291,8 @@ export class SqliteStore {
   // -------------------------------------------------------------------------
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.db.close();
   }
 }

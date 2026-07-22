@@ -2,14 +2,16 @@
 // bunpilot – Control Protocol unit tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
-  encodeMessage,
-  decodeMessages,
+  ControlFrameError,
+  createErrorResponse,
   createRequest,
   createResponse,
-  createErrorResponse,
   createStreamChunk,
+  decodeMessages,
+  encodeMessage,
+  NdjsonFramer,
 } from '../../src/control/protocol';
 
 describe('encodeMessage', () => {
@@ -63,6 +65,23 @@ describe('decodeMessages', () => {
     const results = decodeMessages(input);
     expect(results).toHaveLength(1);
     expect(results[0]).toEqual({ obj: true });
+  });
+});
+
+describe('NdjsonFramer', () => {
+  test('preserves UTF-8 characters split at every byte boundary', () => {
+    const encoded = new TextEncoder().encode(encodeMessage({ text: 'caffè 🚀 東京' }));
+
+    for (let split = 1; split < encoded.length; split++) {
+      const framer = new NdjsonFramer();
+      expect(framer.push(encoded.slice(0, split))).toEqual([]);
+      expect(framer.push(encoded.slice(split))).toEqual([{ text: 'caffè 🚀 東京' }]);
+    }
+  });
+
+  test('rejects an incomplete frame above the configured bound', () => {
+    const framer = new NdjsonFramer(8);
+    expect(() => framer.push('123456789')).toThrow(ControlFrameError);
   });
 });
 

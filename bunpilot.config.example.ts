@@ -22,7 +22,7 @@ const config: BunpilotConfig = {
       // Number of worker processes. Use 'max' to match available CPU cores.
       instances: 2,
 
-      // Base port – each instance receives PORT via env.
+      // Public port – each instance receives BUNPILOT_PORT via env.
       port: 3000,
 
       // Additional environment variables forwarded to workers.
@@ -74,10 +74,10 @@ const config: BunpilotConfig = {
         collectInterval: 5_000,
       },
 
-      // Clustering strategy: 'reusePort' (default), 'proxy', or 'auto'
+      // Clustering strategy: 'auto' picks Linux reusePort or the TCP proxy.
       clustering: {
         enabled: true,
-        strategy: 'reusePort',
+        strategy: 'auto',
         rollingRestart: {
           batchSize: 1, // restart one worker at a time
           batchDelay: 2_000, // wait between batches

@@ -2,11 +2,11 @@
 // bunpilot – Signal Handler Unit Tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  setupSignalHandlers,
   removeSignalHandlers,
   type SignalCallbacks,
+  setupSignalHandlers,
 } from '../../src/core/signals';
 
 describe('setupSignalHandlers', () => {

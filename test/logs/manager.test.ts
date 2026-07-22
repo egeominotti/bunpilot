@@ -2,12 +2,12 @@
 // bunpm – Unit Tests: LogManager
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, rmSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { LogManager } from '../../src/logs/manager';
+import { join } from 'node:path';
 import type { LogsConfig } from '../../src/config/types';
+import { LogManager } from '../../src/logs/manager';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -88,6 +88,71 @@ describe('LogManager', () => {
     manager.closeAll();
   });
 
+  test('closeAll drains an in-flight stream before closing its writer', async () => {
+    const manager = new LogManager(tempDir);
+    const delayed = new ReadableStream<Uint8Array>({
+      start(controller) {
+        setTimeout(() => {
+          controller.enqueue(new TextEncoder().encode('late-line\n'));
+          controller.close();
+        }, 20);
+      },
+    });
+    const empty = new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
+
+    manager.pipeOutput('drain-app', 0, delayed, empty, makeLogsConfig(), false);
+    await manager.closeAll();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(await Bun.file(join(tempDir, 'drain-app', 'drain-app-0-out.log')).text()).toBe(
+      'late-line\n',
+    );
+  });
+
+  test('creates safe nested custom log paths and keeps worker suffixes in place', async () => {
+    const manager = new LogManager(tempDir);
+    const config = makeLogsConfig({
+      outFile: 'archive/custom.log',
+      errFile: 'archive/errors.log',
+    });
+
+    const { stdout, stderr } = manager.createWriters('api', 2, config);
+    await stdout.write('out\n');
+    await stderr.write('err\n');
+
+    expect(existsSync(join(tempDir, 'api', 'archive', 'custom-2.log'))).toBe(true);
+    expect(existsSync(join(tempDir, 'api', 'archive', 'errors-2.log'))).toBe(true);
+    manager.closeAll();
+  });
+
+  test('shares one writer when stdout and stderr target the same file', async () => {
+    const manager = new LogManager(tempDir);
+    const { stdout, stderr } = manager.createWriters(
+      'combined',
+      0,
+      makeLogsConfig({ outFile: 'combined.log', errFile: 'combined.log' }),
+    );
+
+    expect(stdout).toBe(stderr);
+    await stdout.write('out\n');
+    await stderr.write('err\n');
+    expect(readFileSync(join(tempDir, 'combined', 'combined.log'), 'utf-8')).toBe('out\nerr\n');
+    manager.closeAll();
+  });
+
+  test('closeWorker releases only the selected worker writers', async () => {
+    const manager = new LogManager(tempDir);
+    const first = manager.createWriters('app', 0, makeLogsConfig());
+    const second = manager.createWriters('app', 1, makeLogsConfig());
+    manager.closeWorker('app', 0);
+
+    await first.stdout.write('closed\n');
+    await second.stdout.write('open\n');
+    expect(existsSync(join(tempDir, 'app', 'app-0-out.log'))).toBe(false);
+    expect(readFileSync(join(tempDir, 'app', 'app-1-out.log'), 'utf-8')).toBe('open\n');
+    manager.closeAll();
+  });
+
   // -----------------------------------------------------------------------
   // closeAll
   // -----------------------------------------------------------------------
@@ -163,11 +228,11 @@ describe('LogManager', () => {
     const config = makeLogsConfig();
 
     // First call creates writers
-    const { stdout: w1, stderr: w1err } = manager.createWriters('app', 0, config);
+    const { stdout: w1 } = manager.createWriters('app', 0, config);
     await w1.write('first writer\n');
 
     // Second call for the same app:workerId should close old writers
-    const { stdout: w2, stderr: w2err } = manager.createWriters('app', 0, config);
+    const { stdout: w2 } = manager.createWriters('app', 0, config);
     await w2.write('second writer\n');
 
     // Old writer should be closed — writing to it should be a no-op

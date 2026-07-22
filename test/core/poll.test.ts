@@ -2,8 +2,8 @@
 // bunpilot – pollUntil Unit Tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
-import { pollUntil, DEFAULT_POLL_INTERVAL } from '../../src/core/poll';
+import { describe, expect, test } from 'bun:test';
+import { DEFAULT_POLL_INTERVAL, pollUntil } from '../../src/core/poll';
 
 describe('pollUntil', () => {
   test('resolves true immediately when predicate is already satisfied', async () => {
@@ -37,10 +37,14 @@ describe('pollUntil', () => {
     let calls = 0;
 
     await expect(
-      pollUntil(() => {
-        calls += 1;
-        throw boom;
-      }, 1_000, 20),
+      pollUntil(
+        () => {
+          calls += 1;
+          throw boom;
+        },
+        1_000,
+        20,
+      ),
     ).rejects.toBe(boom);
 
     // Predicate is only evaluated once before the rejection.
@@ -49,10 +53,14 @@ describe('pollUntil', () => {
 
   test('honours a custom interval', async () => {
     let count = 0;
-    const result = await pollUntil(() => {
-      count += 1;
-      return count >= 3;
-    }, 1_000, 30);
+    const result = await pollUntil(
+      () => {
+        count += 1;
+        return count >= 3;
+      },
+      1_000,
+      30,
+    );
 
     expect(result).toBe(true);
     expect(count).toBe(3);

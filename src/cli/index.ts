@@ -26,6 +26,7 @@ const VALUE_FLAGS: Record<string, string> = {
   '-n': 'name',
   '--env': 'env',
   '--config': 'config',
+  '--socket': 'socket',
   '--lines': 'lines',
 };
 

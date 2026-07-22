@@ -6,9 +6,9 @@
 // and Prometheus exposition format output.
 // ---------------------------------------------------------------------------
 
-import { sendCommand } from './_connect';
-import { formatTable, formatMemory, logWarn } from '../format';
 import type { AppStatus, WorkerInfo } from '../../config/types';
+import { formatMemory, formatTable, logWarn } from '../format';
+import { sendCommand } from './_connect';
 
 // ---------------------------------------------------------------------------
 // Command
@@ -69,7 +69,8 @@ function printPrometheus(apps: AppStatus[]): void {
   const lines: string[] = [];
 
   for (const app of apps) {
-    const labels = (w: WorkerInfo) => `{app="${app.name}",worker="${w.id}",pid="${w.pid}"}`;
+    const labels = (w: WorkerInfo) =>
+      `{app="${escapeLabelValue(app.name)}",worker="${w.id}",pid="${w.pid}"}`;
 
     for (const w of app.workers) {
       if (w.cpu) {
@@ -86,4 +87,8 @@ function printPrometheus(apps: AppStatus[]): void {
   }
 
   console.log(lines.join('\n'));
+}
+
+function escapeLabelValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }

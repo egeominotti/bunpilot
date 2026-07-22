@@ -2,31 +2,30 @@
 // bunpilot – Unit Tests for Global Constants & Defaults
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach } from 'bun:test';
-import { join } from 'node:path';
+import { describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { mkdtempSync, existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
+  APP_DEFAULTS,
   BUNPILOT_HOME,
-  SOCKET_PATH,
-  PID_FILE,
-  DB_PATH,
-  LOGS_DIR,
-  DAEMON_LOG,
   CONFIG_FILES,
-  INTERNAL_PORT_BASE,
-  INTERNAL_ENV_KEYS,
-  DEFAULT_HEALTH_CHECK,
+  DAEMON_LOG,
+  DB_PATH,
   DEFAULT_BACKOFF,
+  DEFAULT_CLUSTERING,
+  DEFAULT_HEALTH_CHECK,
   DEFAULT_LOGS,
   DEFAULT_METRICS,
-  DEFAULT_CLUSTERING,
-  APP_DEFAULTS,
+  ensureBunpilotHome,
   HEARTBEAT_INTERVAL,
   HEARTBEAT_MISS_THRESHOLD,
-  ensureBunpilotHome,
+  INTERNAL_ENV_KEYS,
+  INTERNAL_PORT_BASE,
+  LOGS_DIR,
+  PID_FILE,
+  SOCKET_PATH,
 } from '../src/constants';
 
 // ---------------------------------------------------------------------------

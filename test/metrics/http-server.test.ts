@@ -2,8 +2,8 @@
 // bunpilot – Unit Tests for MetricsHttpServer
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach } from 'bun:test';
-import { MetricsHttpServer, type MetricsDataProvider } from '../../src/metrics/http-server';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { type MetricsDataProvider, MetricsHttpServer } from '../../src/metrics/http-server';
 
 // ---------------------------------------------------------------------------
 // Helpers

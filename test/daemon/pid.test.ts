@@ -2,18 +2,17 @@
 // bunpilot – Unit Tests for Daemon PID Utilities
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
 import {
-  writePidFile,
+  checkStalePid,
+  isBunpilotProcess,
+  isProcessRunning,
   readPidFile,
   removePidFile,
-  isProcessRunning,
-  isBunpilotProcess,
-  checkStalePid,
+  writePidFile,
 } from '../../src/daemon/pid';
 
 // ---------------------------------------------------------------------------
@@ -58,6 +57,31 @@ describe('writePidFile / readPidFile', () => {
     writeFileSync(pidFile, '');
     expect(readPidFile(pidFile)).toBeNull();
   });
+
+  test('readPidFile rejects partial, zero, negative, and unsafe PIDs', () => {
+    const pidFile = join(tempDir, 'strict.pid');
+    for (const value of ['123abc', '0', '-1', '9007199254740992']) {
+      writeFileSync(pidFile, value);
+      expect(readPidFile(pidFile)).toBeNull();
+    }
+  });
+
+  test('writePidFile rejects invalid PIDs', () => {
+    expect(() => writePidFile(join(tempDir, 'invalid.pid'), 0)).toThrow();
+    expect(() => writePidFile(join(tempDir, 'invalid.pid'), -1)).toThrow();
+  });
+
+  test('writes PID files with owner-only permissions even under a permissive umask', () => {
+    const pidFile = join(tempDir, 'private.pid');
+    const previousUmask = process.umask(0);
+    try {
+      writePidFile(pidFile, 12345);
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    expect(statSync(pidFile).mode & 0o777).toBe(0o600);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -78,6 +102,15 @@ describe('removePidFile', () => {
     const pidFile = join(tempDir, 'missing.pid');
     expect(() => removePidFile(pidFile)).not.toThrow();
   });
+
+  test('does not remove a PID file that now belongs to a replacement daemon', () => {
+    const pidFile = join(tempDir, 'replacement.pid');
+    writePidFile(pidFile, 222);
+
+    removePidFile(pidFile, 111);
+
+    expect(readPidFile(pidFile)).toBe(222);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -93,6 +126,12 @@ describe('isProcessRunning', () => {
     // Use a very high PID that almost certainly does not exist
     expect(isProcessRunning(99999999)).toBe(false);
   });
+
+  test('returns false for invalid PIDs without signaling a process group', () => {
+    expect(isProcessRunning(0)).toBe(false);
+    expect(isProcessRunning(-1)).toBe(false);
+    expect(isProcessRunning(Number.NaN)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -100,10 +139,28 @@ describe('isProcessRunning', () => {
 // ---------------------------------------------------------------------------
 
 describe('isBunpilotProcess', () => {
-  test('returns true for a bun process', () => {
-    // Current process IS a bun process (running tests via bun)
-    const result = isBunpilotProcess(process.pid);
-    expect(result).toBe(true);
+  test('does not trust an unrelated process merely because an argument contains bunpilot', () => {
+    const proc = Bun.spawn({
+      cmd: ['bun', '-e', 'await Bun.sleep(60_000)', 'bunpilot-daemon-marker'],
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    try {
+      expect(isBunpilotProcess(proc.pid)).toBe(false);
+    } finally {
+      proc.kill();
+    }
+  });
+
+  test('recognizes a Bunpilot-marked process with the hidden daemon command', () => {
+    const proc = Bun.spawn({
+      cmd: ['bun', '-e', 'await Bun.sleep(60_000)', 'bunpilot-daemon-marker', '__daemon'],
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    try {
+      expect(isBunpilotProcess(proc.pid)).toBe(true);
+    } finally {
+      proc.kill();
+    }
   });
 
   test('returns false for a non-bun process', () => {

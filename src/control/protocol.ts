@@ -4,6 +4,46 @@
 
 import type { ControlRequest, ControlResponse, ControlStreamChunk } from '../config/types';
 
+export const MAX_CONTROL_FRAME_BYTES = 1024 * 1024;
+
+export class ControlFrameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ControlFrameError';
+  }
+}
+
+/** Stateful, UTF-8-safe NDJSON framing with a bounded incomplete frame. */
+export class NdjsonFramer {
+  private buffer = '';
+  private readonly decoder = new TextDecoder();
+
+  constructor(private readonly maxFrameBytes: number = MAX_CONTROL_FRAME_BYTES) {}
+
+  push(raw: string | Uint8Array): object[] {
+    this.buffer += typeof raw === 'string' ? raw : this.decoder.decode(raw, { stream: true });
+
+    const messages: object[] = [];
+    let newline = this.buffer.indexOf('\n');
+    while (newline !== -1) {
+      const line = this.buffer.slice(0, newline);
+      this.assertWithinLimit(line);
+      messages.push(...decodeMessages(`${line}\n`));
+      this.buffer = this.buffer.slice(newline + 1);
+      newline = this.buffer.indexOf('\n');
+    }
+    this.assertWithinLimit(this.buffer);
+    return messages;
+  }
+
+  private assertWithinLimit(value: string): void {
+    if (new TextEncoder().encode(value).byteLength > this.maxFrameBytes) {
+      this.buffer = '';
+      throw new ControlFrameError(`Control frame exceeds ${this.maxFrameBytes} bytes`);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // NDJSON encoding / decoding
 // ---------------------------------------------------------------------------
@@ -12,7 +52,7 @@ import type { ControlRequest, ControlResponse, ControlStreamChunk } from '../con
  * Encode an object as a single NDJSON line (JSON + newline).
  */
 export function encodeMessage(msg: object): string {
-  return JSON.stringify(msg) + '\n';
+  return `${JSON.stringify(msg)}\n`;
 }
 
 /**

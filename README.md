@@ -1,448 +1,245 @@
-# bunpilot
+# Bunpilot
 
+[![CI](https://github.com/egeominotti/bunpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/egeominotti/bunpilot/actions/workflows/ci.yml)
+[![Release](https://github.com/egeominotti/bunpilot/actions/workflows/release.yml/badge.svg)](https://github.com/egeominotti/bunpilot/actions/workflows/release.yml)
 [![npm](https://img.shields.io/npm/v/bunpilot)](https://www.npmjs.com/package/bunpilot)
-[![license](https://img.shields.io/npm/l/bunpilot)](./LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-**Bun-native process manager. PM2 for the Bun ecosystem.**
+Bunpilot is a Bun-native process manager for long-running services: clustered workers, guarded crash recovery, zero-downtime rolling reloads, health checks, metrics, bounded log rotation, SQLite desired state, and graceful shutdown in one CLI.
 
-> **Warning:** This project is still experimental. APIs and configuration may change between minor versions. Use in production at your own risk.
+Version 1.0 supports Linux and macOS on x64 and arm64. The daemon control plane uses Unix-domain sockets; Windows is not currently supported.
 
-A process manager built from the ground up for [Bun](https://bun.sh) — zero npm runtime dependencies, single-binary distribution, and full leverage of Bun-native APIs (`Bun.spawn`, `Bun.serve`, `bun:sqlite`).
+## What it provides
 
----
+- Worker lifecycle with readiness deadlines and stale-generation protection
+- Exponential backoff with restart windows, app isolation, and retryable rollback
+- Linux `SO_REUSEPORT` clustering or a portable TCP round-robin proxy
+- Rolling reloads that retain old capacity until replacements are online
+- Namespaced HTTP health checks and IPC heartbeats
+- CPU and memory metrics with JSON and Prometheus endpoints
+- Per-worker stdout/stderr capture with bounded rotation and safe nested paths
+- SQLite persistence and restoration of desired running state
+- Correlated, bounded NDJSON control protocol over an owner-only Unix socket
+- A side-effect-free TypeScript API and worker SDK with no runtime dependencies
 
-## Features
+## Requirements and support
 
-- **Clustering** — Automatic load balancing via `SO_REUSEPORT` (Linux) or TCP round-robin proxy (macOS)
-- **Crash Recovery** — Exponential backoff with configurable restart limits and sliding windows
-- **Zero-Downtime Reload** — Rolling restart replaces workers one at a time
-- **Health Checks** — IPC heartbeat + HTTP probe with configurable thresholds
-- **Metrics** — Built-in CPU/memory collection with Prometheus exposition format
-- **Log Management** — Size-based rotation with configurable max files
-- **Persistent State** — SQLite (WAL mode) stores apps, workers, restart history, and metrics
-- **Graceful Shutdown** — Configurable signal + timeout with SIGKILL escalation
-- **Daemon Mode** — Background process with Unix socket IPC (NDJSON protocol)
-- **TypeScript Config** — First-class `bunpilot.config.ts` support with full type safety
+| Component | Supported |
+|---|---|
+| Runtime | Bun 1.3.14+ |
+| Operating systems | Linux, macOS |
+| Architectures | x64, arm64 |
+| Linux libc | glibc, musl release binaries |
+| Configuration | TypeScript, JavaScript, JSON |
 
----
+The standalone Bunpilot executable embeds Bun for the control plane. Managed TypeScript/JavaScript applications still use `bun run` by default, so install Bun on worker hosts unless each app supplies a custom `interpreter`.
 
-## Requirements
+## Install
 
-- [Bun](https://bun.sh) >= 1.0
-
----
-
-## Installation
+Install the package channel:
 
 ```bash
-# Install from npm
-bun add -g bunpilot
+bun add --global bunpilot
 ```
 
-Or build from source:
+Or download the archive for your platform from [GitHub Releases](https://github.com/egeominotti/bunpilot/releases), verify it against `SHA256SUMS`, and put `bunpilot` on `PATH`.
+
+Build from source:
 
 ```bash
 git clone https://github.com/egeominotti/bunpilot.git
 cd bunpilot
-bun install
-bun run build    # Produces a single ./bunpilot binary
+npm ci --ignore-scripts
+bun run ci
+bun run build
+./bunpilot --version
 ```
 
----
+## Quick start
 
-## Quick Start
+Your worker must bind `BUNPILOT_PORT`, announce readiness, and register graceful cleanup:
 
-> **Important:** The bunpilot daemon must be running before you can start or manage any processes. All commands communicate with the daemon over a Unix socket.
+```ts
+import {
+  bunpilotOnShutdown,
+  bunpilotReady,
+  bunpilotStartMetrics,
+} from 'bunpilot/worker';
 
-### 1. Start the daemon
+const server = Bun.serve({
+  port: Number(process.env.BUNPILOT_PORT ?? 3000),
+  reusePort: process.env.BUNPILOT_REUSE_PORT === '1',
+  fetch(request) {
+    if (new URL(request.url).pathname === '/health') {
+      return new Response('ok');
+    }
+    return Response.json({ pid: process.pid });
+  },
+});
 
-```bash
-bunpilot daemon start
+bunpilotReady(); // also starts IPC heartbeats
+bunpilotStartMetrics();
+bunpilotOnShutdown(() => server.stop(true));
 ```
 
-Verify it is running:
-
-```bash
-bunpilot ping
-```
-
-### 2. Start a process
-
-```bash
-# Start a single script
-bunpilot start ./server.ts --name myapp --port 3000
-
-# Start with clustering (4 workers)
-bunpilot start ./server.ts --name myapp --instances 4 --port 3000
-
-# Start from a config file
-bunpilot start --config bunpilot.config.ts
-```
-
-### 3. Inspect and monitor
-
-```bash
-bunpilot list                # List all processes with status
-bunpilot status myapp        # Detailed info for a specific app
-bunpilot logs myapp          # Stream stdout/stderr logs
-bunpilot metrics             # Live CPU/memory dashboard
-bunpilot metrics --json      # Metrics as JSON
-```
-
-### 4. Lifecycle operations
-
-```bash
-bunpilot restart myapp       # Stop + start
-bunpilot reload myapp        # Zero-downtime rolling restart
-bunpilot stop myapp          # Graceful stop
-bunpilot delete myapp        # Stop and remove from the daemon
-```
-
-### 5. Stop the daemon
-
-When you are done, shut down the daemon and all managed processes:
-
-```bash
-bunpilot daemon stop
-```
-
-### Daemon management
-
-```bash
-bunpilot daemon start        # Start the background daemon
-bunpilot daemon stop         # Stop the daemon and all processes
-bunpilot daemon status       # Check daemon health
-bunpilot ping                # Verify daemon responsiveness
-```
-
----
-
-## Configuration
-
-Generate an example config:
+Generate and edit a config:
 
 ```bash
 bunpilot init
 ```
 
-This creates a `bunpilot.config.ts` file:
-
-```typescript
-import type { BunpilotConfig } from './src/config/types';
+```ts
+import type { BunpilotConfig } from 'bunpilot';
 
 const config: BunpilotConfig = {
   apps: [
     {
-      name: 'api-server',
+      name: 'api',
       script: './src/server.ts',
-      instances: 2,
+      instances: 'max',
       port: 3000,
-
-      env: {
-        NODE_ENV: 'production',
-      },
-
-      // Health checks
+      env: { NODE_ENV: 'production' },
       healthCheck: {
         enabled: true,
         path: '/health',
         interval: 10_000,
-        timeout: 5_000,
+        timeout: 2_000,
         unhealthyThreshold: 3,
       },
-
-      // Restart policy
-      maxRestarts: 15,
-      maxRestartWindow: 60_000,
-      minUptime: 5_000,
-      backoff: { initial: 1_000, multiplier: 2, max: 30_000 },
-
-      // Graceful shutdown
-      shutdownSignal: 'SIGTERM',
-      killTimeout: 8_000,
-      readyTimeout: 10_000,
-
-      // Log rotation
-      logs: {
-        outFile: './logs/api-out.log',
-        errFile: './logs/api-err.log',
-        maxSize: 10 * 1024 * 1024,  // 10 MB
-        maxFiles: 5,
-      },
-
-      // Metrics
-      metrics: {
-        enabled: true,
-        prometheus: false,
-        collectInterval: 5_000,
-      },
-
-      // Clustering
       clustering: {
         enabled: true,
-        strategy: 'reusePort',
-        rollingRestart: { batchSize: 1, batchDelay: 2_000 },
+        strategy: 'auto',
+        rollingRestart: { batchSize: 1, batchDelay: 1_000 },
+      },
+      logs: {
+        outFile: 'archive/api-out.log',
+        errFile: 'archive/api-err.log',
+        maxSize: 10 * 1024 * 1024,
+        maxFiles: 5,
+      },
+      metrics: {
+        enabled: true,
+        prometheus: true,
+        httpPort: 9615,
+        collectInterval: 5_000,
       },
     },
   ],
-
-  daemon: {
-    pidFile: './bunpilot.pid',
-    socketFile: './bunpilot.sock',
-    logFile: './logs/bunpilot-daemon.log',
-  },
 };
 
 export default config;
 ```
 
-### Configuration Reference
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `name` | `string` | *required* | Application name |
-| `script` | `string` | *required* | Entry point path |
-| `instances` | `number \| 'max'` | `1` | Worker count (`'max'` = CPU cores) |
-| `port` | `number` | — | Base port for workers |
-| `env` | `Record<string, string>` | — | Environment variables |
-| `cwd` | `string` | `process.cwd()` | Working directory |
-| `interpreter` | `string` | — | Custom interpreter (default: `bun`) |
-| `maxRestarts` | `number` | `15` | Max restarts within window |
-| `maxRestartWindow` | `number` | `900_000` | Restart window in ms (15 min) |
-| `minUptime` | `number` | `30_000` | Min uptime to reset crash counter (ms) |
-| `killTimeout` | `number` | `5_000` | Force-kill timeout (ms) |
-| `shutdownSignal` | `'SIGTERM' \| 'SIGINT'` | `'SIGTERM'` | Graceful shutdown signal |
-| `readyTimeout` | `number` | `30_000` | Max wait for `bunpilotReady()` (ms) |
-
-### Clustering Strategies
-
-| Strategy | Platform | How It Works |
-|---|---|---|
-| `reusePort` | Linux | Kernel distributes connections via `SO_REUSEPORT` |
-| `proxy` | macOS / fallback | Master runs a TCP proxy with round-robin |
-| `auto` | Any | Detects platform and picks the best strategy |
-
----
-
-## Worker SDK
-
-Integrate your application with bunpilot using the worker SDK:
-
-```typescript
-import { bunpilotReady, bunpilotOnShutdown, bunpilotStartMetrics } from 'bunpilot/worker';
-
-// Start your server
-const server = Bun.serve({
-  port: process.env.BUNPILOT_PORT ?? 3000,
-  fetch(req) {
-    return new Response('Hello!');
-  },
-});
-
-// Signal that the worker is ready to accept traffic
-bunpilotReady();
-
-// Start periodic metrics reporting (every 5s)
-bunpilotStartMetrics(5_000);
-
-// Handle graceful shutdown
-bunpilotOnShutdown(async () => {
-  server.stop(true);
-});
-```
-
-### SDK API
-
-| Function | Description |
-|---|---|
-| `bunpilotReady()` | Notify master that the worker is online and ready |
-| `bunpilotOnShutdown(handler)` | Register async cleanup handler for graceful shutdown |
-| `bunpilotStartMetrics(interval?)` | Start periodic CPU/memory reporting (default: 5000ms) |
-
-### Worker Environment Variables
-
-bunpilot injects these environment variables into each worker:
-
-| Variable | Description |
-|---|---|
-| `BUNPILOT_WORKER_ID` | Worker index (0-based) |
-| `BUNPILOT_PORT` | Port the worker should bind to |
-| `BUNPILOT_REUSE_PORT` | `'1'` if using `reusePort` strategy |
-| `BUNPILOT_APP_NAME` | Application name |
-| `BUNPILOT_INSTANCES` | Total number of instances |
-
----
-
-## CLI Reference
-
-```
-bunpilot — Bun-native process manager
-
-Usage:
-  bunpilot <command> [args] [flags]
-
-Process Commands:
-  start <script|config>      Start a process (or cluster)
-  stop <name|all>            Stop a running process
-  restart <name|all>         Restart a process (stop + start)
-  reload <name|all>          Gracefully reload (zero-downtime)
-  delete <name|all>          Stop and remove a process
-
-Inspection Commands:
-  list                       List all managed processes
-  status <name>              Show detailed process info
-  logs [name]                Stream process log output
-  metrics                    Live CPU / memory dashboard
-
-Daemon Commands:
-  daemon <start|stop|status> Manage the background daemon
-  ping                       Check if the daemon is alive
-
-Other:
-  init                       Generate a config file template
-
-Global Flags:
-  --help, -h                 Show help
-  --version, -v              Show version
-  --json                     Output as JSON
-  --force                    Force the operation
-  --prometheus               Export metrics in Prometheus format
-```
-
----
-
-## Metrics & Monitoring
-
-### Prometheus Export
-
-Enable Prometheus scraping on port 9615 (default):
-
-```typescript
-metrics: {
-  enabled: true,
-  prometheus: true,
-  httpPort: 9615,
-  collectInterval: 5_000,
-}
-```
-
-Exposed metrics:
-
-```
-bunpilot_worker_memory_rss_bytes{app="api-server",worker="0"} 52428800
-bunpilot_worker_memory_heap_used_bytes{app="api-server",worker="0"} 31457280
-bunpilot_worker_cpu_percent{app="api-server",worker="0"} 2.5
-bunpilot_worker_restart_count{app="api-server",worker="0"} 0
-bunpilot_master_uptime_seconds{app="api-server"} 3600
-```
-
-### CLI Dashboard
+Start the daemon and application:
 
 ```bash
-bunpilot metrics              # Table view
-bunpilot metrics --json       # JSON output
-bunpilot metrics --prometheus # Prometheus format
+bunpilot daemon start --config bunpilot.config.ts
+bunpilot ping --config bunpilot.config.ts
+bunpilot start --config bunpilot.config.ts
+bunpilot list --config bunpilot.config.ts
 ```
 
----
+`--config` lets commands discover a custom daemon socket. You can instead pass `--socket /path/to/bunpilot.sock` or set `BUNPILOT_SOCKET`. When using custom `daemon.pidFile`, pass the same config to `daemon stop` and `daemon status`.
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────┐
-│                   bunpilot CLI                       │
-│         (Unix socket + NDJSON protocol)           │
-└──────────────┬───────────────────────────────────┘
-               │
-┌──────────────▼───────────────────────────────────┐
-│              Master Daemon                        │
-│  ┌─────────┐ ┌──────────┐ ┌───────────────────┐  │
-│  │ Control │ │ Lifecycle │ │  Crash Recovery   │  │
-│  │ Server  │ │  State    │ │  (exp. backoff)   │  │
-│  └─────────┘ │ Machine   │ └───────────────────┘  │
-│              └──────────┘                         │
-│  ┌──────────┐ ┌─────────┐ ┌───────────────────┐  │
-│  │ Process  │ │ Health  │ │  Metrics          │  │
-│  │ Manager  │ │ Checker │ │  Aggregator       │  │
-│  └────┬─────┘ └─────────┘ └───────────────────┘  │
-│       │   ┌────────────┐  ┌───────────────────┐  │
-│       │   │ SQLite     │  │  Log Manager      │  │
-│       │   │ Store      │  │  (rotation)       │  │
-│       │   └────────────┘  └───────────────────┘  │
-└───────┼──────────────────────────────────────────┘
-        │ Bun.spawn (IPC)
-   ┌────▼─────┐  ┌──────────┐  ┌──────────┐
-   │ Worker 0 │  │ Worker 1 │  │ Worker N │
-   │  :3000   │  │  :3000   │  │  :3000   │
-   └──────────┘  └──────────┘  └──────────┘
-```
-
-### Worker Lifecycle
-
-```
-spawning → starting → online → draining → stopping → stopped
-                        │                               ↑
-                        └──── crashed ──── spawning ─────┘
-```
-
----
-
-## Development
+## Operations
 
 ```bash
-# Install dependencies
-bun install
+bunpilot list
+bunpilot status api
+bunpilot logs api --lines 200
+bunpilot logs api --follow
+bunpilot metrics
+bunpilot metrics --json
+bunpilot metrics --prometheus
 
-# Run in development
-bun run dev
+bunpilot reload api       # rolling replacement
+bunpilot restart api      # hard restart
+bunpilot restart api --force
+bunpilot stop api
+bunpilot delete api
 
-# Type checking
+bunpilot daemon status
+bunpilot daemon stop
+```
+
+Lifecycle commands accept `all` where applicable. `reload` rejects stopped apps; use `restart` to bring a stopped app back.
+
+## Configuration defaults
+
+| Option | Default | Notes |
+|---|---:|---|
+| `instances` | `1` | `'max'` uses logical CPU count |
+| `maxRestarts` | `15` | Per restart window |
+| `maxRestartWindow` | `900000` | 15 minutes |
+| `minUptime` | `30000` | Resets consecutive crash backoff |
+| `killTimeout` | `5000` | Then escalates to `SIGKILL` |
+| `shutdownSignal` | `SIGTERM` | `SIGTERM` or `SIGINT` |
+| `readyTimeout` | `30000` | Worker must call `bunpilotReady()` |
+| `healthCheck` | enabled | `/health`, 30 s interval, 5 s timeout, threshold 3 |
+| `backoff` | `1000 × 2`, max `30000` | Milliseconds |
+| `logs` | 10 MiB, 5 rotations | Stored under `~/.bunpilot/logs/<app>` |
+| `metrics` | enabled | 5 s collection, HTTP port 9615 |
+| `clustering` | enabled, `auto` | Effective only with multiple ported workers |
+
+Configuration is validated before use. App names and log paths cannot traverse directories; ports, intervals, restart limits, signals, environment entries, and nested objects are checked strictly. Custom log filenames are relative to the app log directory.
+
+### Clustering
+
+`auto` uses kernel `SO_REUSEPORT` on Linux and the Bunpilot TCP proxy elsewhere. Force `proxy` when you need identical behavior across Linux and macOS. A rolling reload adds an online replacement to the proxy before draining its predecessor.
+
+### Metrics API
+
+The metrics server binds only to `127.0.0.1`:
+
+- `GET /metrics` — Prometheus exposition
+- `GET /api/metrics` — JSON worker metrics
+- `GET /api/metrics/:app` — one application
+- `GET /api/status` — daemon status snapshot
+
+All enabled apps in one daemon must use the same `metrics.httpPort`.
+
+### Daemon paths
+
+Defaults live under `BUNPILOT_HOME` (normally `~/.bunpilot`):
+
+- `bunpilot.pid`
+- `bunpilot.sock` (mode `0600`)
+- `bunpilot.db`
+- `bunpilot-daemon.log`
+- `logs/<app>/...`
+
+Override the base with `BUNPILOT_HOME`, the socket with `BUNPILOT_SOCKET`, or configure `daemon.pidFile`, `daemon.socketFile`, and `daemon.logFile`.
+
+## Development and verification
+
+```bash
+bun run check          # Biome; no ESLint or Prettier
 bun run typecheck
-
-# Linting & formatting
-bun run lint
-bun run lint:fix
-bun run format
-bun run format:check
-
-# Run tests (266 tests)
 bun test
-
-# Run tests in watch mode
-bun test --watch
-
-# Run simulation
-bun run scripts/simulate.ts
-
-# Run cluster simulation
-bun run scripts/simulate-cluster.ts
-
-# Build single binary
-bun run build
+bun run test:model     # deterministic model/reference invariants
+bun run test:coverage
+bun run simulate
+bun run simulate:cluster
+bun run version:check
 ```
 
-### Project Structure
+The model suite drives tens of thousands of seeded state transitions and hundreds of thousands of assertions across lifecycle legality, crash-backoff isolation, and arbitrary UTF-8 NDJSON chunking. See [AGENTS.md](./AGENTS.md) for architecture invariants and the required contributor workflow.
 
-```
-src/
-├── index.ts              # CLI entry point
-├── constants.ts          # Global constants & defaults
-├── cli/                  # CLI commands & formatting
-├── config/               # Config loading & validation
-├── core/                 # Master, process manager, lifecycle
-├── cluster/              # reusePort & proxy strategies
-├── control/              # Unix socket server/client (NDJSON)
-├── daemon/               # Daemonization & PID management
-├── health/               # Health check system
-├── ipc/                  # Inter-process communication
-├── logs/                 # Log writer & rotation
-├── metrics/              # Aggregator & Prometheus export
-├── sdk/                  # Public worker SDK
-└── store/                # SQLite persistence
-```
+## Releases
 
----
+Tags named `vX.Y.Z` run the complete quality gate, then build archives for:
+
+- Linux x64 baseline (glibc and musl)
+- Linux arm64 (glibc and musl)
+- macOS x64
+- macOS arm64
+
+The workflow publishes all archives plus `SHA256SUMS`. It does not publish an npm version automatically.
+
+## Security
+
+The control socket is restricted to its owner and metrics bind to loopback. Treat the daemon as same-user administration, not as a remotely exposed control plane. See [SECURITY.md](./SECURITY.md) to report vulnerabilities privately.
 
 ## License
 
-MIT
+[MIT](./LICENSE)

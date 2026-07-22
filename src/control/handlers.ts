@@ -2,8 +2,8 @@
 // bunpilot – Control Handlers: maps CLI commands to daemon actions
 // ---------------------------------------------------------------------------
 
-import type { ControlResponse, AppStatus } from '../config/types';
-import { createResponse, createErrorResponse } from './protocol';
+import type { AppStatus, ControlResponse } from '../config/types';
+import { createErrorResponse, createResponse } from './protocol';
 
 // ---------------------------------------------------------------------------
 // CommandContext – interface the master must satisfy
@@ -18,7 +18,7 @@ export interface CommandContext {
   getApp(name: string): AppStatus | undefined;
   startApp(name: string): Promise<void>;
   stopApp(name: string): Promise<void>;
-  restartApp(name: string): Promise<void>;
+  restartApp(name: string, force?: boolean): Promise<void>;
   reloadApp(name: string): Promise<void>;
   deleteApp(name: string): Promise<void>;
   getMetrics(): unknown;
@@ -93,7 +93,7 @@ export function createCommandHandlers(ctx: CommandContext): Map<string, Handler>
     if (!name) return missingName('');
 
     try {
-      await ctx.restartApp(name);
+      await ctx.restartApp(name, args.force === true);
       return createResponse('', { name, action: 'restarted' });
     } catch (err) {
       return createErrorResponse('', errorMessage(err));
@@ -137,6 +137,14 @@ export function createCommandHandlers(ctx: CommandContext): Map<string, Handler>
     const name = extractName(args);
     if (!name) return missingName('');
 
+    if (
+      args.lines !== undefined &&
+      (!Number.isSafeInteger(args.lines) ||
+        (args.lines as number) < 1 ||
+        (args.lines as number) > 100_000)
+    ) {
+      return createErrorResponse('', 'lines must be an integer between 1 and 100000');
+    }
     const lines = typeof args.lines === 'number' ? args.lines : undefined;
     const logLines = ctx.getLogs(name, lines);
     return createResponse('', logLines);

@@ -2,7 +2,7 @@
 // bunpilot – Unit Tests for ProxyCluster (logic only, no TCP listeners)
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { ProxyCluster } from '../../src/cluster/proxy';
 import { INTERNAL_PORT_BASE } from '../../src/constants';
 

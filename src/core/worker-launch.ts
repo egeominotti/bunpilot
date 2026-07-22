@@ -12,14 +12,14 @@
 // those fields after construction are honoured.
 // ---------------------------------------------------------------------------
 
+import { bindsWithReusePort } from '../cluster/policy';
+import type { ProxyCluster } from '../cluster/proxy';
 import type { WorkerInfo, WorkerMessage } from '../config/types';
 import { DEFAULT_LOGS, PORT_RELEASE_DELAY } from '../constants';
-import { bindsWithReusePort } from '../cluster/policy';
-import type { ProcessManager, SpawnedWorker } from './process-manager';
 import type { HealthChecker } from '../health/checker';
 import type { LogManager } from '../logs/manager';
-import type { ProxyCluster } from '../cluster/proxy';
-import type { WorkerHandler, ManagedApp } from './worker-handler';
+import type { ProcessManager, SpawnedWorker } from './process-manager';
+import type { ManagedApp, WorkerHandler } from './worker-handler';
 
 export interface LaunchDeps {
   processManager: ProcessManager;
@@ -35,16 +35,32 @@ function sleep(ms: number): Promise<void> {
 
 /** Spawn the process for an existing worker entry and wire up monitors/logs. */
 export function launchWorker(deps: LaunchDeps, managed: ManagedApp, worker: WorkerInfo): void {
+  const launchToken = Symbol(`${managed.config.name}:${worker.id}`);
+  managed.launchTokens.set(worker.id, launchToken);
   const spawned = deps.processManager.spawnWorker(
     managed.config,
     worker.id,
-    (wid, msg) => handleWorkerMessage(deps, managed, wid, msg),
-    (wid, code, sig) => handleWorkerExit(deps, managed, wid, code, sig),
+    (wid, msg) => {
+      if (managed.launchTokens.get(wid) === launchToken) {
+        handleWorkerMessage(deps, managed, wid, msg);
+      }
+    },
+    (wid, code, sig) => {
+      if (managed.launchTokens.get(wid) === launchToken) {
+        handleWorkerExit(deps, managed, wid, code, sig);
+      }
+    },
+    managed.workerPorts.get(worker.id),
   );
 
   worker.pid = spawned.pid;
   managed.spawned.set(worker.id, spawned);
-  deps.workerHandler.scheduleStableCheck(managed, worker);
+  deps.workerHandler.scheduleReadyTimeout(managed, worker, (timedOutWorker) => {
+    console.warn(
+      `[master] worker ${timedOutWorker.id} did not become ready within ${managed.config.readyTimeout}ms`,
+    );
+    scheduleRestart(deps, managed, timedOutWorker);
+  });
   startWorkerMonitors(deps, managed, worker.id);
   pipeWorkerLogs(deps, managed, worker.id, spawned);
 }
@@ -59,6 +75,7 @@ export async function restartWorker(
   managed: ManagedApp,
   worker: WorkerInfo,
 ): Promise<void> {
+  deps.workerHandler.clearReadyTimer(managed, worker.id);
   const oldSpawned = managed.spawned.get(worker.id);
   if (oldSpawned && deps.processManager.isRunning(oldSpawned.pid)) {
     // Force 'stopping' before the kill so the SIGTERM-induced exit is handled
@@ -99,9 +116,15 @@ export async function restartWorker(
 
 /** Schedule an async restart without unhandled rejections at sync call sites. */
 export function scheduleRestart(deps: LaunchDeps, managed: ManagedApp, worker: WorkerInfo): void {
-  void restartWorker(deps, managed, worker).catch((err) => {
-    console.error(`[master] failed to restart worker ${worker.id}:`, err);
-  });
+  if (managed.stopping || managed.restartingWorkers.has(worker.id)) return;
+  managed.restartingWorkers.add(worker.id);
+  void restartWorker(deps, managed, worker)
+    .catch((err) => {
+      console.error(`[master] failed to restart worker ${worker.id}:`, err);
+    })
+    .finally(() => {
+      managed.restartingWorkers.delete(worker.id);
+    });
 }
 
 function handleWorkerMessage(
@@ -110,12 +133,27 @@ function handleWorkerMessage(
   wid: number,
   msg: WorkerMessage,
 ): void {
+  const worker = deps.workerHandler.findWorker(managed, wid);
+  const previousState = worker?.state;
   deps.workerHandler.handleMessage(managed, wid, msg);
-  if (msg.type === 'ready') {
-    deps.getProxy(managed.config.name)?.addWorker(wid);
+  if (msg.type === 'ready' && worker?.state === 'online' && previousState !== 'online') {
+    deps.workerHandler.clearReadyTimer(managed, wid);
+    if (
+      managed.config.healthCheck?.enabled &&
+      (managed.config.port !== undefined || managed.workerPorts.has(wid))
+    ) {
+      deps.healthChecker.startChecking(
+        wid,
+        managed.config,
+        managed.config.name,
+        managed.workerPorts.get(wid),
+      );
+    }
+    deps.workerHandler.scheduleStableCheck(managed, worker);
+    deps.getProxy(managed.config.name)?.addWorker(wid, managed.workerPorts.get(wid));
   }
   if (msg.type === 'heartbeat') {
-    deps.healthChecker.onHeartbeat(wid);
+    deps.healthChecker.onHeartbeat(wid, managed.config.name);
   }
 }
 
@@ -126,21 +164,25 @@ function handleWorkerExit(
   code: number | null,
   sig: string | null,
 ): void {
+  deps.workerHandler.clearReadyTimer(managed, wid);
   deps.getProxy(managed.config.name)?.removeWorker(wid);
   deps.workerHandler.handleExit(managed, wid, code, sig, (m, w) => scheduleRestart(deps, m, w));
 }
 
 function startWorkerMonitors(deps: LaunchDeps, managed: ManagedApp, workerId: number): void {
-  deps.healthChecker.startChecking(workerId, managed.config);
-  deps.healthChecker.startHeartbeatMonitor(workerId, (wid) => {
-    console.warn(`[master] worker ${wid} heartbeat stale`);
-    deps.healthChecker.stopChecking(wid);
-    deps.healthChecker.stopHeartbeatMonitor(wid);
-    const w = deps.workerHandler.findWorker(managed, wid);
-    if (w && (w.state === 'online' || w.state === 'starting')) {
-      scheduleRestart(deps, managed, w);
-    }
-  });
+  deps.healthChecker.startHeartbeatMonitor(
+    workerId,
+    (wid) => {
+      console.warn(`[master] worker ${wid} heartbeat stale`);
+      deps.healthChecker.stopChecking(wid, managed.config.name);
+      deps.healthChecker.stopHeartbeatMonitor(wid, managed.config.name);
+      const w = deps.workerHandler.findWorker(managed, wid);
+      if (w && (w.state === 'online' || w.state === 'starting')) {
+        scheduleRestart(deps, managed, w);
+      }
+    },
+    managed.config.name,
+  );
 }
 
 function pipeWorkerLogs(

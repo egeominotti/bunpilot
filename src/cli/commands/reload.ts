@@ -6,9 +6,9 @@
 // time so the application stays available throughout the process.
 // ---------------------------------------------------------------------------
 
-import { sendCommand, requireArg } from './_connect';
 import type { AppStatus } from '../../config/types';
 import { logWarn } from '../format';
+import { requireArg, sendCommand } from './_connect';
 
 // ---------------------------------------------------------------------------
 // Command

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // ---------------------------------------------------------------------------
 // bunpilot – Cluster Simulation Script
 // ---------------------------------------------------------------------------
@@ -8,9 +9,11 @@
 // arriving on the public port are distributed to different workers.
 // ---------------------------------------------------------------------------
 
-import { ProcessManager } from '../src/core/process-manager';
-import { ProxyCluster } from '../src/cluster/proxy';
 import { join } from 'node:path';
+import { ProxyCluster } from '../src/cluster/proxy';
+import type { AppConfig } from '../src/config/types';
+import { INTERNAL_PORT_BASE } from '../src/constants';
+import { ProcessManager } from '../src/core/process-manager';
 
 const BOLD = '\x1b[1m';
 const GREEN = '\x1b[32m';
@@ -37,7 +40,6 @@ function fail(label: string, err: unknown): void {
 
 const WORKER_COUNT = 3;
 const PUBLIC_PORT = 18800;
-const INTERNAL_PORT_BASE = 40_001; // Must match src/constants.ts
 const scriptPath = join(import.meta.dir, 'http-server.ts');
 
 console.log(`\n${BOLD}=== bunpilot Cluster Simulation ===${RESET}`);
@@ -67,10 +69,10 @@ const workers: WorkerInfo[] = [];
 for (let i = 0; i < WORKER_COUNT; i++) {
   const internalPort = INTERNAL_PORT_BASE + i;
 
-  const cfg = {
+  const cfg: AppConfig = {
     name: 'cluster-test',
     script: scriptPath,
-    instances: WORKER_COUNT as any,
+    instances: WORKER_COUNT,
     maxRestarts: 5,
     maxRestartWindow: 60_000,
     minUptime: 1_000,
@@ -79,6 +81,11 @@ for (let i = 0; i < WORKER_COUNT; i++) {
     readyTimeout: 30_000,
     backoff: { initial: 1_000, multiplier: 2, max: 30_000 },
     port: internalPort,
+    clustering: {
+      enabled: false,
+      strategy: 'proxy',
+      rollingRestart: { batchSize: 1, batchDelay: 0 },
+    },
   };
 
   const worker = pm.spawnWorker(
@@ -127,11 +134,12 @@ if (uniqueWorkerPids.size === WORKER_COUNT) {
 
 console.log(`\n${BOLD}--- Starting ProxyCluster on port ${PUBLIC_PORT} ---${RESET}`);
 
-proxy.start(PUBLIC_PORT, WORKER_COUNT);
+const workerPorts = new Map(workers.map((worker) => [worker.workerId, worker.port]));
+proxy.start(PUBLIC_PORT, WORKER_COUNT, workerPorts);
 
 // Mark all workers as alive
 for (let i = 0; i < WORKER_COUNT; i++) {
-  proxy.addWorker(i);
+  proxy.addWorker(i, workerPorts.get(i));
 }
 
 ok(`ProxyCluster started with ${WORKER_COUNT} workers`);
@@ -198,7 +206,9 @@ for (const w of workers) {
 if (fairnessOk) {
   ok(`Perfect round-robin: each worker got exactly ${expectedPerWorker} requests`);
 } else {
-  console.log(`  ${YELLOW}NOTE${RESET} Distribution not perfectly even (connection reuse may cause this)`);
+  console.log(
+    `  ${YELLOW}NOTE${RESET} Distribution not perfectly even (connection reuse may cause this)`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +262,10 @@ if (!pidsAfterRemove.has(removedPid)) {
 if (pidsAfterRemove.size === WORKER_COUNT - 1) {
   ok(`Remaining ${WORKER_COUNT - 1} workers still receive traffic`);
 } else {
-  fail('Remaining workers', `Expected ${WORKER_COUNT - 1} active workers, got ${pidsAfterRemove.size}`);
+  fail(
+    'Remaining workers',
+    `Expected ${WORKER_COUNT - 1} active workers, got ${pidsAfterRemove.size}`,
+  );
 }
 
 // ---------------------------------------------------------------------------

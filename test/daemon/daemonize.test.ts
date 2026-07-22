@@ -13,17 +13,11 @@
 // with a configurable PID file to test against real spawned processes.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync, existsSync } from 'node:fs';
-import {
-  writePidFile,
-  readPidFile,
-  removePidFile,
-  isProcessRunning,
-} from '../../src/daemon/pid';
+import { isProcessRunning, readPidFile, removePidFile, writePidFile } from '../../src/daemon/pid';
 
 // ---------------------------------------------------------------------------
 // Helpers: reusable stopDaemon logic with configurable PID file
@@ -578,7 +572,7 @@ describe('stopDaemon signal flow', () => {
   test('stops a real spawned process end-to-end', async () => {
     // Full integration: spawn -> write PID -> stop -> verify dead + cleaned up
     const pidFile = join(tempDir, 'e2e-daemon.pid');
-    const { pid, proc } = spawnSleepProcess();
+    const { pid } = spawnSleepProcess();
     writePidFile(pidFile, pid);
 
     expect(isProcessRunning(pid)).toBe(true);

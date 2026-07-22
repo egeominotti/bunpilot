@@ -35,7 +35,7 @@ export function toAppStatus(managed: ManagedApp): AppStatus {
 
   let status: AppStatus['status'];
   if (managed.workers.length === 0) {
-    status = managed.startedAt ? 'running' : 'stopped';
+    status = managed.startedAt !== null ? 'running' : 'stopped';
   } else if (allStopped) {
     status = hasErrored ? 'errored' : 'stopped';
   } else {
@@ -46,8 +46,12 @@ export function toAppStatus(managed: ManagedApp): AppStatus {
   return {
     name: managed.config.name,
     status,
-    workers: [...managed.workers],
-    config: managed.config,
+    workers: managed.workers.map((worker) => ({
+      ...worker,
+      memory: worker.memory ? { ...worker.memory } : null,
+      cpu: worker.cpu ? { ...worker.cpu } : null,
+    })),
+    config: structuredClone(managed.config),
     startedAt: managed.startedAt,
   };
 }

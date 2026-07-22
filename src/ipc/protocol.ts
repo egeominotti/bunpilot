@@ -2,7 +2,7 @@
 // bunpilot – IPC Protocol: validation and message factories
 // ---------------------------------------------------------------------------
 
-import type { WorkerMessage, MasterMessage } from '../config/types';
+import type { MasterMessage, WorkerMessage } from '../config/types';
 
 // ---------------------------------------------------------------------------
 // Worker -> Master validation
@@ -14,6 +14,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
 function isValidMetricsPayload(payload: unknown): boolean {
   if (!isPlainObject(payload)) return false;
   const { memory, cpu } = payload;
@@ -22,12 +26,12 @@ function isValidMetricsPayload(payload: unknown): boolean {
 
   const memKeys = ['rss', 'heapTotal', 'heapUsed', 'external'] as const;
   for (const key of memKeys) {
-    if (typeof memory[key] !== 'number') return false;
+    if (!isNonNegativeFiniteNumber(memory[key])) return false;
   }
 
   const cpuKeys = ['user', 'system'] as const;
   for (const key of cpuKeys) {
-    if (typeof cpu[key] !== 'number') return false;
+    if (!isNonNegativeFiniteNumber(cpu[key])) return false;
   }
 
   return true;
@@ -51,10 +55,10 @@ export function isValidWorkerMessage(msg: unknown): msg is WorkerMessage {
       return isValidMetricsPayload(msg.payload);
 
     case 'heartbeat':
-      return typeof msg.uptime === 'number';
+      return isNonNegativeFiniteNumber(msg.uptime);
 
     case 'custom':
-      return typeof msg.channel === 'string';
+      return typeof msg.channel === 'string' && msg.channel.length > 0 && msg.channel.length <= 256;
 
     default:
       return false;
@@ -79,7 +83,7 @@ export function isValidMasterMessage(msg: unknown): msg is MasterMessage {
 
   switch (type) {
     case 'shutdown':
-      return typeof msg.timeout === 'number' && msg.timeout >= 0;
+      return isNonNegativeFiniteNumber(msg.timeout);
 
     case 'ping':
     case 'collect-metrics':

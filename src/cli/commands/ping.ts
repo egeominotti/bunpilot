@@ -6,8 +6,8 @@
 // response time in milliseconds.
 // ---------------------------------------------------------------------------
 
+import { logError, logSuccess } from '../format';
 import { sendCommand } from './_connect';
-import { logSuccess, logError } from '../format';
 
 // ---------------------------------------------------------------------------
 // Command

@@ -2,8 +2,8 @@
 // bunpilot – WorkerLifecycle Unit Tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { WorkerLifecycle, type StateChangeListener } from '../../src/core/lifecycle';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { type StateChangeListener, WorkerLifecycle } from '../../src/core/lifecycle';
 
 describe('WorkerLifecycle', () => {
   let lifecycle: WorkerLifecycle;

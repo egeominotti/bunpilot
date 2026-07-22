@@ -1,9 +1,12 @@
 // ---------------------------------------------------------------------------
 // bunpilot – Unit Tests: SqliteStore
 // ---------------------------------------------------------------------------
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { SqliteStore } from '../../src/store/sqlite';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AppConfig } from '../../src/config/types';
+import { SqliteStore } from '../../src/store/sqlite';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,12 +38,36 @@ describe('SqliteStore', () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* already closed */ }
+    try {
+      store.close();
+    } catch {
+      /* already closed */
+    }
   });
 
   // -- Initialization -----------------------------------------------------
   test('init creates tables without throwing', () => {
     expect(() => store.init()).not.toThrow();
+  });
+
+  test('protects the database containing persisted environment secrets', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bunpilot-private-db-'));
+    const dbPath = join(directory, 'state', 'bunpilot.db');
+    const previousUmask = process.umask(0);
+    let diskStore: SqliteStore | undefined;
+    try {
+      diskStore = new SqliteStore(dbPath);
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    try {
+      expect(statSync(dbPath).mode & 0o777).toBe(0o600);
+      expect(statSync(join(directory, 'state')).mode & 0o777).toBe(0o700);
+    } finally {
+      diskStore?.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   // -- App CRUD -----------------------------------------------------------
@@ -257,8 +284,24 @@ describe('SqliteStore', () => {
     expect(w2.started_at).toBeGreaterThanOrEqual(originalStartedAt);
   });
 
+  test('saveWorker updates started_at when PID changes from null', async () => {
+    store.saveWorker('app', 0, 'stopped');
+    const originalStartedAt = store.getWorkers('app')[0].started_at;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    store.saveWorker('app', 0, 'starting', 5678);
+    expect(store.getWorkers('app')[0].started_at).toBeGreaterThan(originalStartedAt);
+  });
+
+  test('rejects invalid statuses and query bounds', () => {
+    expect(() => store.updateAppStatus('app', 'typo')).toThrow('Invalid app status');
+    expect(() => store.getRestartHistory('app', 0)).toThrow();
+    expect(() => store.cleanupOldMetrics(-1)).toThrow();
+    expect(() => store.cleanupOldRestarts(-1)).toThrow();
+  });
+
   // -- Lifecycle ----------------------------------------------------------
   test('close does not throw', () => {
+    expect(() => store.close()).not.toThrow();
     expect(() => store.close()).not.toThrow();
   });
 });

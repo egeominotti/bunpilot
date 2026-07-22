@@ -2,12 +2,12 @@
 // bunpilot – Unit Tests for Config Loader
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach } from 'bun:test';
-import { loadConfig, loadFromCLI } from '../../src/config/loader';
-import { APP_DEFAULTS, DEFAULT_BACKOFF, CONFIG_FILES } from '../../src/constants';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { loadConfig, loadFromCLI } from '../../src/config/loader';
+import { APP_DEFAULTS, CONFIG_FILES, DEFAULT_BACKOFF } from '../../src/constants';
 
 // ---------------------------------------------------------------------------
 // loadFromCLI
@@ -96,6 +96,11 @@ describe('deriveAppName (via loadFromCLI)', () => {
     expect(config.name).toBe('handler');
   });
 
+  test('derives a safe name from a Windows path', () => {
+    const config = loadFromCLI({ script: 'C:\\apps\\server.ts' });
+    expect(config.name).toBe('server');
+  });
+
   test('handles filename with multiple dots', () => {
     const config = loadFromCLI({ script: 'my.api.server.ts' });
     // lastIndexOf('.') strips only the last extension
@@ -146,7 +151,10 @@ describe('loadFromCLI validation', () => {
 // ---------------------------------------------------------------------------
 
 function makeTmpDir(): string {
-  const dir = join(tmpdir(), `bunpilot-loader-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = join(
+    tmpdir(),
+    `bunpilot-loader-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -207,10 +215,7 @@ describe('loadConfig with JSON files', () => {
   test('loads a JSON config with single-app shorthand (script at top level)', async () => {
     dir = makeTmpDir();
     const configPath = join(dir, 'bunpilot.json');
-    writeFileSync(
-      configPath,
-      JSON.stringify({ name: 'solo', script: 'server.ts', port: 8080 }),
-    );
+    writeFileSync(configPath, JSON.stringify({ name: 'solo', script: 'server.ts', port: 8080 }));
 
     const config = await loadConfig(configPath);
 
@@ -255,7 +260,9 @@ describe('loadConfig with JSON files', () => {
     const configPath = join(dir, 'bunpilot.json');
     writeFileSync(configPath, JSON.stringify({ apps: [] }));
 
-    await expect(loadConfig(configPath)).rejects.toThrow('"apps" array must contain at least one app config.');
+    await expect(loadConfig(configPath)).rejects.toThrow(
+      '"apps" array must contain at least one app config.',
+    );
   });
 
   test('throws when JSON config is missing apps and script', async () => {
@@ -393,7 +400,9 @@ describe('loadConfig with unsupported file extensions', () => {
     const configPath = join(dir, 'bunpilot.yaml');
     writeFileSync(configPath, 'apps: []');
 
-    await expect(loadConfig(configPath)).rejects.toThrow('Unsupported config file extension ".yaml"');
+    await expect(loadConfig(configPath)).rejects.toThrow(
+      'Unsupported config file extension ".yaml"',
+    );
   });
 
   test('throws for .toml extension', async () => {
@@ -401,7 +410,9 @@ describe('loadConfig with unsupported file extensions', () => {
     const configPath = join(dir, 'bunpilot.toml');
     writeFileSync(configPath, '');
 
-    await expect(loadConfig(configPath)).rejects.toThrow('Unsupported config file extension ".toml"');
+    await expect(loadConfig(configPath)).rejects.toThrow(
+      'Unsupported config file extension ".toml"',
+    );
   });
 
   test('throws for .xml extension', async () => {
@@ -409,7 +420,9 @@ describe('loadConfig with unsupported file extensions', () => {
     const configPath = join(dir, 'bunpilot.xml');
     writeFileSync(configPath, '<config></config>');
 
-    await expect(loadConfig(configPath)).rejects.toThrow('Unsupported config file extension ".xml"');
+    await expect(loadConfig(configPath)).rejects.toThrow(
+      'Unsupported config file extension ".xml"',
+    );
   });
 });
 
@@ -434,10 +447,7 @@ describe('loadConfig with explicit path', () => {
   test('resolves relative paths to absolute', async () => {
     dir = makeTmpDir();
     const configPath = join(dir, 'bunpilot.json');
-    writeFileSync(
-      configPath,
-      JSON.stringify({ apps: [{ name: 'app', script: 'app.ts' }] }),
-    );
+    writeFileSync(configPath, JSON.stringify({ apps: [{ name: 'app', script: 'app.ts' }] }));
 
     // Passing the absolute path should work fine
     const config = await loadConfig(configPath);
@@ -643,10 +653,7 @@ describe('loadConfig end-to-end validation', () => {
   test('throws when app is missing script field', async () => {
     dir = makeTmpDir();
     const configPath = join(dir, 'bunpilot.json');
-    writeFileSync(
-      configPath,
-      JSON.stringify({ apps: [{ name: 'broken' }] }),
-    );
+    writeFileSync(configPath, JSON.stringify({ apps: [{ name: 'broken' }] }));
 
     await expect(loadConfig(configPath)).rejects.toThrow();
   });

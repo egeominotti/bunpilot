@@ -3,9 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import type { AppConfig, WorkerInfo } from '../config/types';
-import type { ProcessManager } from './process-manager';
 import type { WorkerLifecycle } from './lifecycle';
 import { pollUntil } from './poll';
+import type { ProcessManager } from './process-manager';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,13 +77,14 @@ export class ReloadHandler {
   /**
    * Wait until every worker in the list is `online`, or the timeout elapses.
    *
-   * Resolves on success or on timeout (we proceed on timeout to avoid a
-   * deadlock). H3: if any replacement enters a terminal-failure state
+   * Resolves on success. A timeout is a failed deployment: draining the old
+   * workers would reduce capacity and violate zero-downtime semantics. If any
+   * replacement enters a terminal-failure state
    * (`crashed`/`errored`) before coming online, the predicate throws so
    * pollUntil rejects fast and the caller aborts the drain.
    */
   private async waitForReady(workers: WorkerInfo[], timeout: number): Promise<void> {
-    await pollUntil(() => {
+    const ready = await pollUntil(() => {
       const failed = workers.find((w) => w.state === 'crashed' || w.state === 'errored');
       if (failed) {
         throw new Error(
@@ -92,6 +93,12 @@ export class ReloadHandler {
       }
       return workers.every((w) => w.state === 'online');
     }, timeout);
+
+    if (!ready) {
+      throw new Error(
+        `reload aborted: replacement workers did not become ready within ${timeout}ms`,
+      );
+    }
   }
 
   /** Split an array into chunks of at most `size` elements. */

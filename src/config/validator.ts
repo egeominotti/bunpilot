@@ -2,7 +2,12 @@
 // bunpilot – Config Validation & Defaults
 // ---------------------------------------------------------------------------
 
-import { APP_DEFAULTS } from '../constants';
+import { basename, dirname, extname, join, normalize } from 'node:path';
+import { resolveInstances } from '../cluster/policy';
+import { APP_DEFAULTS, DEFAULT_METRICS } from '../constants';
+
+export { resolveInstances } from '../cluster/policy';
+
 import type { AppConfig, BunpilotConfig } from './types';
 import {
   assertString,
@@ -15,26 +20,10 @@ import {
   validateInstances,
   validateLogs,
   validateMetrics,
+  validateOptionalString,
   validatePort,
   validateShutdownSignal,
 } from './validate-helpers';
-
-// ---------------------------------------------------------------------------
-// Instance resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the `instances` value.
- *
- * - A positive integer is returned as-is.
- * - `'max'` resolves to the number of logical CPUs available.
- */
-export function resolveInstances(instances: number | 'max'): number {
-  if (instances === 'max') {
-    return navigator.hardwareConcurrency;
-  }
-  return instances;
-}
 
 // ---------------------------------------------------------------------------
 // App-level validation
@@ -55,6 +44,21 @@ export function validateApp(raw: unknown): AppConfig {
   // --- Required fields -------------------------------------------------------
   assertString(raw.name, 'name', ctx);
   assertString(raw.script, 'script', ctx);
+  if (raw.name === '.' || raw.name === '..') {
+    throw new Error(`[${ctx}] "name" must not be "." or "..".`);
+  }
+  if (/[\\/]/.test(raw.name)) {
+    throw new Error(`[${ctx}] "name" must not contain path separators.`);
+  }
+  if (raw.name.length > 128) {
+    throw new Error(`[${ctx}] "name" must be at most 128 characters.`);
+  }
+  if (/\p{Cc}/u.test(raw.name)) {
+    throw new Error(`[${ctx}] "name" must not contain control characters.`);
+  }
+  if (raw.name.includes('\0') || raw.script.includes('\0')) {
+    throw new Error(`[${ctx}] "name" and "script" must not contain NUL characters.`);
+  }
 
   // --- Instances & port ------------------------------------------------------
   const instances = validateInstances(raw.instances, ctx);
@@ -69,21 +73,32 @@ export function validateApp(raw: unknown): AppConfig {
     script: raw.script,
     instances,
     maxRestarts:
-      validateBoundedNumber(raw.maxRestarts, 'maxRestarts', ctx, 0, 10_000) ??
+      validateBoundedNumber(raw.maxRestarts, 'maxRestarts', ctx, 0, 10_000, true) ??
       APP_DEFAULTS.maxRestarts,
     maxRestartWindow:
-      validateBoundedNumber(raw.maxRestartWindow, 'maxRestartWindow', ctx, 0, 86_400_000) ??
-      APP_DEFAULTS.maxRestartWindow,
+      validateBoundedNumber(
+        raw.maxRestartWindow,
+        'maxRestartWindow',
+        ctx,
+        1_000,
+        86_400_000,
+        true,
+      ) ?? APP_DEFAULTS.maxRestartWindow,
     minUptime:
-      validateBoundedNumber(raw.minUptime, 'minUptime', ctx, 0, 600_000) ?? APP_DEFAULTS.minUptime,
+      validateBoundedNumber(raw.minUptime, 'minUptime', ctx, 0, 600_000, true) ??
+      APP_DEFAULTS.minUptime,
     killTimeout:
-      validateBoundedNumber(raw.killTimeout, 'killTimeout', ctx, 1_000, 120_000) ??
+      validateBoundedNumber(raw.killTimeout, 'killTimeout', ctx, 1_000, 120_000, true) ??
       APP_DEFAULTS.killTimeout,
     shutdownSignal: validateShutdownSignal(raw.shutdownSignal, ctx),
     readyTimeout:
-      validateBoundedNumber(raw.readyTimeout, 'readyTimeout', ctx, 1_000, 300_000) ??
+      validateBoundedNumber(raw.readyTimeout, 'readyTimeout', ctx, 1_000, 300_000, true) ??
       APP_DEFAULTS.readyTimeout,
     backoff: validateBackoff(raw.backoff, ctx),
+    healthCheck: validateHealthCheck(raw.healthCheck, ctx),
+    logs: validateLogs(raw.logs, ctx),
+    metrics: validateMetrics(raw.metrics, ctx),
+    clustering: validateClustering(raw.clustering, ctx),
   };
 
   // --- Optional fields -------------------------------------------------------
@@ -94,32 +109,47 @@ export function validateApp(raw: unknown): AppConfig {
   const env = validateEnv(raw.env, ctx);
   if (env) config.env = env;
 
-  if (typeof raw.cwd === 'string' && raw.cwd.length > 0) {
-    config.cwd = raw.cwd;
-  }
+  const cwd = validateOptionalString(raw.cwd, 'cwd', ctx);
+  if (cwd) config.cwd = cwd;
 
-  if (typeof raw.interpreter === 'string' && raw.interpreter.length > 0) {
-    config.interpreter = raw.interpreter;
-  }
+  const interpreter = validateOptionalString(raw.interpreter, 'interpreter', ctx);
+  if (interpreter) config.interpreter = interpreter;
 
-  // --- Sub-configs -----------------------------------------------------------
-  if (raw.healthCheck !== undefined) {
-    config.healthCheck = validateHealthCheck(raw.healthCheck, ctx);
-  }
-
-  if (raw.logs !== undefined) {
-    config.logs = validateLogs(raw.logs, ctx);
-  }
-
-  if (raw.metrics !== undefined) {
-    config.metrics = validateMetrics(raw.metrics, ctx);
-  }
-
-  if (raw.clustering !== undefined) {
-    config.clustering = validateClustering(raw.clustering, ctx);
-  }
+  validateLogPathCollisions(config, ctx);
 
   return config;
+}
+
+/** Ensure worker suffixing cannot make stdout and stderr share another worker's file. */
+function validateLogPathCollisions(config: AppConfig, ctx: string): void {
+  const outFile = config.logs?.outFile;
+  const errFile = config.logs?.errFile;
+  if (!outFile || !errFile) return;
+
+  const paths = new Map<string, { workerId: number; stream: string }>();
+  const instances = resolveInstances(config.instances);
+  for (let workerId = 0; workerId < instances; workerId++) {
+    for (const [stream, filename] of [
+      ['stdout', outFile],
+      ['stderr', errFile],
+    ] as const) {
+      const path = normalize(addWorkerSuffix(filename, workerId));
+      const previous = paths.get(path);
+      if (previous && previous.workerId !== workerId) {
+        throw new Error(
+          `[${ctx}] log files for worker ${workerId} ${stream} and worker ${previous.workerId} ${previous.stream} collide at "${path}".`,
+        );
+      }
+      paths.set(path, { workerId, stream });
+    }
+  }
+}
+
+function addWorkerSuffix(filename: string, workerId: number): string {
+  if (workerId === 0) return filename;
+  const ext = extname(filename);
+  const base = basename(filename, ext);
+  return join(dirname(filename), `${base}-${workerId}${ext}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +189,7 @@ export function validateConfig(raw: unknown): BunpilotConfig {
   const apps: AppConfig[] = [];
   const seenNames = new Set<string>();
   const seenPorts = new Map<number, string>();
+  let metricsPort: { port: number; appName: string } | null = null;
 
   for (let i = 0; i < rawApps.length; i++) {
     const app = validateApp(rawApps[i]);
@@ -175,23 +206,43 @@ export function validateConfig(raw: unknown): BunpilotConfig {
       seenPorts.set(app.port, app.name);
     }
 
+    if (app.metrics?.enabled && app.metrics.httpPort !== undefined) {
+      if (metricsPort && metricsPort.port !== app.metrics.httpPort) {
+        throw new Error(
+          `Enabled apps "${metricsPort.appName}" and "${app.name}" configure different metrics ports (${metricsPort.port} and ${app.metrics.httpPort}).`,
+        );
+      }
+      metricsPort ??= { port: app.metrics.httpPort, appName: app.name };
+    }
+
     apps.push(app);
+  }
+
+  const daemonMetricsPort = metricsPort?.port ?? DEFAULT_METRICS.httpPort;
+  if (daemonMetricsPort !== undefined) {
+    const conflictingApp = seenPorts.get(daemonMetricsPort);
+    if (conflictingApp) {
+      throw new Error(
+        `Port ${daemonMetricsPort} is used by app "${conflictingApp}" and the daemon metrics listener.`,
+      );
+    }
   }
 
   // Daemon config (optional, pass-through).
   const config: BunpilotConfig = { apps };
 
+  if (raw.daemon !== undefined && raw.daemon !== null && !isRecord(raw.daemon)) {
+    throw new Error('"daemon" must be an object.');
+  }
+
   if (isRecord(raw.daemon)) {
     config.daemon = {};
-    if (typeof raw.daemon.pidFile === 'string') {
-      config.daemon.pidFile = raw.daemon.pidFile;
-    }
-    if (typeof raw.daemon.socketFile === 'string') {
-      config.daemon.socketFile = raw.daemon.socketFile;
-    }
-    if (typeof raw.daemon.logFile === 'string') {
-      config.daemon.logFile = raw.daemon.logFile;
-    }
+    const pidFile = validateOptionalString(raw.daemon.pidFile, 'daemon.pidFile', 'config');
+    const socketFile = validateOptionalString(raw.daemon.socketFile, 'daemon.socketFile', 'config');
+    const logFile = validateOptionalString(raw.daemon.logFile, 'daemon.logFile', 'config');
+    if (pidFile) config.daemon.pidFile = pidFile;
+    if (socketFile) config.daemon.socketFile = socketFile;
+    if (logFile) config.daemon.logFile = logFile;
   }
 
   return config;

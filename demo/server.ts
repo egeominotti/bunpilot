@@ -1,4 +1,4 @@
-import { bunpilotReady, bunpilotOnShutdown, bunpilotStartMetrics } from '../src/sdk/worker';
+import { bunpilotOnShutdown, bunpilotReady, bunpilotStartMetrics } from '../src/sdk/worker';
 
 const PORT = Number(process.env.BUNPILOT_PORT) || 3000;
 

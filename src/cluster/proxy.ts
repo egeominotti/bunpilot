@@ -31,6 +31,7 @@ interface WorkerSlot {
 interface ConnState {
   upstream: unknown;
   pending: Buffer[];
+  pendingBytes: number;
   /** Set once the public client socket closes/errors. */
   clientClosed: boolean;
 }
@@ -50,6 +51,7 @@ interface WritableEnd {
  * using simple round-robin.
  */
 export class ProxyCluster {
+  private static readonly MAX_PENDING_BYTES = 1024 * 1024;
   /** Worker slots keyed by workerId. Supports non-contiguous IDs for replacement workers. */
   private workers: Map<number, WorkerSlot> = new Map();
 
@@ -70,10 +72,13 @@ export class ProxyCluster {
    * Start the TCP proxy on `publicPort`, distributing to `workerCount`
    * internal ports starting at `INTERNAL_PORT_BASE`.
    */
-  start(publicPort: number, workerCount: number): void {
+  start(publicPort: number, workerCount: number, workerPorts?: ReadonlyMap<number, number>): void {
+    if (this.listener) {
+      throw new Error('proxy is already running');
+    }
     this.workers = new Map();
     for (let i = 0; i < workerCount; i++) {
-      this.workers.set(i, { port: INTERNAL_PORT_BASE + i, alive: false });
+      this.workers.set(i, { port: workerPorts?.get(i) ?? INTERNAL_PORT_BASE + i, alive: false });
     }
 
     this.rrIndex = 0;
@@ -84,7 +89,7 @@ export class ProxyCluster {
       port: publicPort,
       socket: {
         open: (socket) => {
-          socket.data = { upstream: null, pending: [], clientClosed: false };
+          socket.data = { upstream: null, pending: [], pendingBytes: 0, clientClosed: false };
           this.handleConnection(socket as unknown as WritableEnd & { data: ConnState });
         },
         data: (socket, data) => {
@@ -92,7 +97,14 @@ export class ProxyCluster {
           if (state.upstream) {
             (state.upstream as WritableEnd).write(Buffer.from(data));
           } else {
-            state.pending.push(Buffer.from(data));
+            const chunk = Buffer.from(data);
+            state.pendingBytes += chunk.byteLength;
+            if (state.pendingBytes > ProxyCluster.MAX_PENDING_BYTES) {
+              state.pending.length = 0;
+              socket.end();
+              return;
+            }
+            state.pending.push(chunk);
           }
         },
         close: (socket) => {
@@ -106,14 +118,15 @@ export class ProxyCluster {
   }
 
   /** Mark worker as alive so the proxy starts sending it traffic. */
-  addWorker(workerId: number): void {
+  addWorker(workerId: number, portOverride?: number): void {
     const slot = this.workers.get(workerId);
     if (slot) {
+      if (portOverride !== undefined) slot.port = portOverride;
       slot.alive = true;
     } else {
       // Replacement worker with a new ID – create a slot dynamically.
       this.workers.set(workerId, {
-        port: INTERNAL_PORT_BASE + workerId,
+        port: portOverride ?? INTERNAL_PORT_BASE + workerId,
         alive: true,
       });
     }
@@ -220,6 +233,7 @@ export class ProxyCluster {
             (upstream as unknown as WritableEnd).write(chunk);
           }
           clientSocket.data.pending.length = 0;
+          clientSocket.data.pendingBytes = 0;
         },
         data: (_upstream, data) => {
           clientSocket.write(Buffer.from(data));

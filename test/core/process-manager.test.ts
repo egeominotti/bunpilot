@@ -2,12 +2,12 @@
 // bunpilot – ProcessManager Unit Tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ProcessManager, type SpawnedWorker } from '../../src/core/process-manager';
 import type { AppConfig, WorkerMessage } from '../../src/config/types';
+import { ProcessManager } from '../../src/core/process-manager';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -93,13 +93,15 @@ describe('ProcessManager', () => {
 
     test('returns false after a process has been killed', async () => {
       // Spawn a short-lived process and wait for it to exit.
-      const script = writeWorkerScript(
-        'short-lived.ts',
-        'setTimeout(() => process.exit(0), 50);',
-      );
+      const script = writeWorkerScript('short-lived.ts', 'setTimeout(() => process.exit(0), 50);');
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       // Wait for the process to exit.
@@ -115,13 +117,15 @@ describe('ProcessManager', () => {
 
   describe('spawnWorker', () => {
     test('returns a SpawnedWorker with pid, proc, stdout, stderr', () => {
-      const script = writeWorkerScript(
-        'basic.ts',
-        'setTimeout(() => process.exit(0), 5000);',
-      );
+      const script = writeWorkerScript('basic.ts', 'setTimeout(() => process.exit(0), 5000);');
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 1, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        1,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       expect(spawned.pid).toBeGreaterThan(0);
@@ -131,10 +135,7 @@ describe('ProcessManager', () => {
     });
 
     test('invokes onExit callback when child process exits', async () => {
-      const script = writeWorkerScript(
-        'exit-fast.ts',
-        'process.exit(42);',
-      );
+      const script = writeWorkerScript('exit-fast.ts', 'process.exit(42);');
       const config = makeConfig({ script });
 
       const exitResult = await new Promise<{
@@ -142,9 +143,14 @@ describe('ProcessManager', () => {
         exitCode: number | null;
         signalCode: string | null;
       }>((resolve) => {
-        const spawned = pm.spawnWorker(config, 7, () => {}, (wid, ec, sc) => {
-          resolve({ workerId: wid, exitCode: ec, signalCode: sc });
-        });
+        const spawned = pm.spawnWorker(
+          config,
+          7,
+          () => {},
+          (wid, ec, sc) => {
+            resolve({ workerId: wid, exitCode: ec, signalCode: sc });
+          },
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -167,14 +173,45 @@ describe('ProcessManager', () => {
         workerId: number;
         msg: WorkerMessage;
       }>((resolve) => {
-        const spawned = pm.spawnWorker(config, 3, (wid, msg) => {
-          resolve({ workerId: wid, msg });
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          3,
+          (wid, msg) => {
+            resolve({ workerId: wid, msg });
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
       expect(messageResult.workerId).toBe(3);
       expect(messageResult.msg).toEqual({ type: 'ready' });
+    });
+
+    test('drops malformed IPC messages from workers', async () => {
+      const script = writeWorkerScript(
+        'ipc-invalid.ts',
+        `
+        process.send?.({ type: 'heartbeat', uptime: -1 });
+        setTimeout(() => process.exit(0), 30);
+        `,
+      );
+      const config = makeConfig({ script });
+      let received = false;
+
+      await new Promise<void>((resolve) => {
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          () => {
+            received = true;
+          },
+          () => resolve(),
+        );
+        spawnedPids.push(spawned.pid);
+      });
+
+      expect(received).toBe(false);
     });
 
     test('sets BUNPILOT_WORKER_ID environment variable', async () => {
@@ -189,9 +226,14 @@ describe('ProcessManager', () => {
       const config = makeConfig({ script });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 5, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          5,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -213,9 +255,14 @@ describe('ProcessManager', () => {
       const config = makeConfig({ script, name: 'my-awesome-app' });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -237,9 +284,14 @@ describe('ProcessManager', () => {
       const config = makeConfig({ script, instances: 4 });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -270,9 +322,14 @@ describe('ProcessManager', () => {
       const config = makeConfig({ script });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -288,6 +345,76 @@ describe('ProcessManager', () => {
       }
     });
 
+    test('does not allow config env to reintroduce internal keys', async () => {
+      const script = writeWorkerScript(
+        'env-config-leak.ts',
+        `
+        process.send?.({
+          type: 'custom',
+          channel: 'env',
+          data: { daemon: process.env.BUNPILOT_DAEMON ?? 'undefined' },
+        });
+        setTimeout(() => process.exit(0), 30);
+        `,
+      );
+      const config = makeConfig({ script, env: { BUNPILOT_DAEMON: 'attacker-controlled' } });
+
+      const msg = await new Promise<WorkerMessage>((resolve) => {
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, message) => resolve(message),
+          () => {},
+        );
+        spawnedPids.push(spawned.pid);
+      });
+
+      expect(msg.type).toBe('custom');
+      if (msg.type === 'custom') {
+        expect((msg.data as Record<string, string>).daemon).toBe('undefined');
+      }
+    });
+
+    test('uses an explicitly allocated internal port', async () => {
+      const script = writeWorkerScript(
+        'env-port-override.ts',
+        `
+        process.send?.({
+          type: 'custom',
+          channel: 'env',
+          data: { port: process.env.BUNPILOT_PORT },
+        });
+        setTimeout(() => process.exit(0), 30);
+        `,
+      );
+      const config = makeConfig({
+        script,
+        instances: 2,
+        port: 3000,
+        clustering: {
+          enabled: true,
+          strategy: 'proxy',
+          rollingRestart: { batchSize: 1, batchDelay: 0 },
+        },
+      });
+
+      const msg = await new Promise<WorkerMessage>((resolve) => {
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, message) => resolve(message),
+          () => {},
+          45_678,
+        );
+        spawnedPids.push(spawned.pid);
+      });
+
+      expect(msg.type).toBe('custom');
+      if (msg.type === 'custom') {
+        expect((msg.data as Record<string, string>).port).toBe('45678');
+      }
+    });
+
     test('overlays user-defined env from config', async () => {
       const script = writeWorkerScript(
         'env-custom.ts',
@@ -300,9 +427,14 @@ describe('ProcessManager', () => {
       const config = makeConfig({ script, env: { MY_CUSTOM_VAR: 'hello-bunpilot' } });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -323,9 +455,14 @@ describe('ProcessManager', () => {
       const config = makeConfig({ script, cwd: tempDir });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -338,16 +475,18 @@ describe('ProcessManager', () => {
     });
 
     test('uses interpreter when specified in config', () => {
-      const script = writeWorkerScript(
-        'interp.ts',
-        'setTimeout(() => process.exit(0), 5000);',
-      );
+      const script = writeWorkerScript('interp.ts', 'setTimeout(() => process.exit(0), 5000);');
       const config = makeConfig({ script, interpreter: 'bun' });
 
       // We can't easily inspect the command array, but we can spawn and verify
       // the process starts. With interpreter='bun', the command should be
       // ['bun', script] instead of ['bun', 'run', script].
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       expect(spawned.pid).toBeGreaterThan(0);
@@ -363,7 +502,12 @@ describe('ProcessManager', () => {
       );
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       const reader = spawned.stdout.getReader();
@@ -383,7 +527,12 @@ describe('ProcessManager', () => {
       );
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       const reader = spawned.stderr.getReader();
@@ -404,6 +553,22 @@ describe('ProcessManager', () => {
       expect(result).toBe('exited');
     });
 
+    test('rejects when the process is still alive after SIGKILL', async () => {
+      const internals = pm as any;
+      const originalKill = process.kill;
+      internals.isRunning = () => true;
+      internals.waitForExit = async () => false;
+      process.kill = (() => true) as typeof process.kill;
+
+      try {
+        await expect(pm.killWorker(12_345, 'SIGTERM', 10)).rejects.toThrow(
+          'still running after SIGKILL',
+        );
+      } finally {
+        process.kill = originalKill;
+      }
+    });
+
     test('returns "exited" when process exits gracefully on SIGTERM', async () => {
       const script = writeWorkerScript(
         'graceful.ts',
@@ -417,7 +582,12 @@ describe('ProcessManager', () => {
       );
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       // Give the process a moment to start.
@@ -442,7 +612,12 @@ describe('ProcessManager', () => {
       );
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       // Give the process a moment to start.
@@ -458,13 +633,15 @@ describe('ProcessManager', () => {
     });
 
     test('returns "exited" when process is already dead at the time of kill', async () => {
-      const script = writeWorkerScript(
-        'already-dead.ts',
-        'process.exit(0);',
-      );
+      const script = writeWorkerScript('already-dead.ts', 'process.exit(0);');
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       // Wait for process to exit on its own.
@@ -486,7 +663,12 @@ describe('ProcessManager', () => {
       );
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -509,7 +691,12 @@ describe('ProcessManager', () => {
       );
       const config = makeConfig({ script });
 
-      const spawned = pm.spawnWorker(config, 0, () => {}, () => {});
+      const spawned = pm.spawnWorker(
+        config,
+        0,
+        () => {},
+        () => {},
+      );
       spawnedPids.push(spawned.pid);
 
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -539,9 +726,14 @@ describe('ProcessManager', () => {
       const config = makeConfig({ script, port: 3000, instances: 1 });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -567,9 +759,14 @@ describe('ProcessManager', () => {
       const config = makeConfig({ script, instances: 1 });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -586,8 +783,8 @@ describe('ProcessManager', () => {
   // Edge cases
   // -------------------------------------------------------------------------
 
-  describe('clustering not explicitly enabled (Bug 9)', () => {
-    test('multi-instance app without clustering config uses configured port, not internal port', async () => {
+  describe('default clustering policy', () => {
+    test('multi-instance app without clustering config uses the default proxy policy', async () => {
       const script = writeWorkerScript(
         'env-port-nocluster.ts',
         `
@@ -603,17 +800,21 @@ describe('ProcessManager', () => {
       delete (config as any).clustering;
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
       expect(msg).toHaveProperty('type', 'custom');
       if (msg.type === 'custom') {
         const data = msg.data as Record<string, string>;
-        // Without explicit clustering enabled, should use the configured port directly
-        expect(data.port).toBe('3000');
+        expect(data.port).toBe(String(40001));
         expect(data.reusePort).toBe('0');
       }
     });
@@ -640,9 +841,14 @@ describe('ProcessManager', () => {
       });
 
       const msg = await new Promise<WorkerMessage>((resolve) => {
-        const spawned = pm.spawnWorker(config, 0, (_wid, m) => {
-          resolve(m);
-        }, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          0,
+          (_wid, m) => {
+            resolve(m);
+          },
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
       });
 
@@ -673,12 +879,17 @@ describe('ProcessManager', () => {
       for (let i = 0; i < 3; i++) {
         promises.push(
           new Promise<void>((resolve) => {
-            const spawned = pm.spawnWorker(config, i, (_wid, m) => {
-              if (m.type === 'custom') {
-                messages.push((m.data as Record<string, string>).wid);
-              }
-              resolve();
-            }, () => {});
+            const spawned = pm.spawnWorker(
+              config,
+              i,
+              (_wid, m) => {
+                if (m.type === 'custom') {
+                  messages.push((m.data as Record<string, string>).wid);
+                }
+                resolve();
+              },
+              () => {},
+            );
             spawnedPids.push(spawned.pid);
           }),
         );
@@ -691,15 +902,17 @@ describe('ProcessManager', () => {
     });
 
     test('spawnWorker assigns unique PIDs to each worker', () => {
-      const script = writeWorkerScript(
-        'unique-pid.ts',
-        'setInterval(() => {}, 100_000);',
-      );
+      const script = writeWorkerScript('unique-pid.ts', 'setInterval(() => {}, 100_000);');
       const config = makeConfig({ script });
 
       const pids = new Set<number>();
       for (let i = 0; i < 3; i++) {
-        const spawned = pm.spawnWorker(config, i, () => {}, () => {});
+        const spawned = pm.spawnWorker(
+          config,
+          i,
+          () => {},
+          () => {},
+        );
         spawnedPids.push(spawned.pid);
         pids.add(spawned.pid);
       }

@@ -3,9 +3,10 @@
 // ---------------------------------------------------------------------------
 
 import type { Subprocess } from 'bun';
+import { bindsWithReusePort, resolveWorkerPort } from '../cluster/policy';
 import type { AppConfig, WorkerMessage } from '../config/types';
 import { INTERNAL_ENV_KEYS } from '../constants';
-import { bindsWithReusePort, resolveWorkerPort } from '../cluster/policy';
+import { isValidWorkerMessage } from '../ipc/protocol';
 import { pollUntil } from './poll';
 
 // ---------------------------------------------------------------------------
@@ -42,8 +43,9 @@ export class ProcessManager {
     workerId: number,
     onMessage: OnMessageCallback,
     onExit: OnExitCallback,
+    portOverride?: number,
   ): SpawnedWorker {
-    const env = this.buildEnv(config, workerId);
+    const env = this.buildEnv(config, workerId, portOverride);
     const cmd = this.buildCommand(config);
 
     const proc = Bun.spawn(cmd, {
@@ -51,8 +53,12 @@ export class ProcessManager {
       env,
       stdout: 'pipe',
       stderr: 'pipe',
-      ipc(message: WorkerMessage) {
-        onMessage(workerId, message);
+      ipc(message: unknown) {
+        if (isValidWorkerMessage(message)) {
+          onMessage(workerId, message);
+        } else {
+          console.warn(`[master] ignored malformed IPC message from worker ${workerId}`);
+        }
       },
       onExit(_proc, exitCode, signalCode) {
         onExit(workerId, exitCode, signalCode as string | null);
@@ -97,6 +103,10 @@ export class ProcessManager {
       return 'exited';
     }
 
+    const sigkillTimeout = Math.max(1_000, Math.min(timeout, 5_000));
+    if (!(await this.waitForExit(pid, sigkillTimeout))) {
+      throw new Error(`Process ${pid} is still running after SIGKILL`);
+    }
     return 'killed';
   }
 
@@ -118,29 +128,36 @@ export class ProcessManager {
     if (config.interpreter) {
       return [config.interpreter, config.script];
     }
-    return ['bun', 'run', config.script];
+    return [Bun.which('bun') ?? process.execPath, 'run', config.script];
   }
 
-  private buildEnv(config: AppConfig, workerId: number): Record<string, string> {
+  private buildEnv(
+    config: AppConfig,
+    workerId: number,
+    portOverride?: number,
+  ): Record<string, string> {
     // Start from the current process env, overlay user-defined vars.
     const base: Record<string, string> = {
       ...this.sanitizeEnv(process.env as Record<string, string>),
-      ...(config.env ?? {}),
+      ...this.sanitizeEnv(config.env ?? {}),
     };
 
+    // A compiled standalone bunpilot may be deployed without a separate `bun`
+    // binary. In that case its own embedded runtime can act as the Bun CLI.
+    if (!config.interpreter && !Bun.which('bun')) base.BUN_BE_BUN = '1';
+
     // Inject BUNPILOT worker vars.
-    base['BUNPILOT_WORKER_ID'] = String(workerId);
-    base['BUNPILOT_APP_NAME'] = config.name;
-    base['BUNPILOT_INSTANCES'] = String(config.instances);
+    base.BUNPILOT_WORKER_ID = String(workerId);
+    base.BUNPILOT_APP_NAME = config.name;
+    base.BUNPILOT_INSTANCES = String(config.instances);
 
     // Port + reuse-port flag come from the shared policy so the health checker
     // (which probes the same port) can never disagree about what we bound.
-    const port = resolveWorkerPort(config, workerId);
+    const port = portOverride ?? resolveWorkerPort(config, workerId);
     if (port !== undefined) {
-      base['BUNPILOT_PORT'] = String(port);
+      base.BUNPILOT_PORT = String(port);
     }
-    base['BUNPILOT_REUSE_PORT'] =
-      bindsWithReusePort(config) && config.port !== undefined ? '1' : '0';
+    base.BUNPILOT_REUSE_PORT = bindsWithReusePort(config) && config.port !== undefined ? '1' : '0';
 
     return base;
   }

@@ -2,12 +2,12 @@
 // bunpilot – WorkerHandler Unit Tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { WorkerHandler, type ManagedApp } from '../../src/core/worker-handler';
-import { WorkerLifecycle } from '../../src/core/lifecycle';
-import { CrashRecovery } from '../../src/core/backoff';
-import type { ProcessManager } from '../../src/core/process-manager';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { AppConfig, WorkerInfo, WorkerMessage } from '../../src/config/types';
+import { CrashRecovery } from '../../src/core/backoff';
+import { WorkerLifecycle } from '../../src/core/lifecycle';
+import type { ProcessManager } from '../../src/core/process-manager';
+import { type ManagedApp, WorkerHandler } from '../../src/core/worker-handler';
 
 // ---------------------------------------------------------------------------
 // Helper: minimal AppConfig
@@ -64,6 +64,11 @@ function makeManagedApp(
     spawned: new Map(),
     startedAt: Date.now(),
     stableTimers: new Map(),
+    readyTimers: new Map(),
+    workerPorts: new Map(),
+    launchTokens: new Map(),
+    restartingWorkers: new Set(),
+    stopping: false,
     nextWorkerId: workers.length,
   };
 }
@@ -627,8 +632,14 @@ describe('WorkerHandler', () => {
       const w2 = makeWorker(2, 'online');
       const managed = makeManagedApp([w1, w2]);
 
-      managed.stableTimers.set(1, setTimeout(() => {}, 10_000));
-      managed.stableTimers.set(2, setTimeout(() => {}, 10_000));
+      managed.stableTimers.set(
+        1,
+        setTimeout(() => {}, 10_000),
+      );
+      managed.stableTimers.set(
+        2,
+        setTimeout(() => {}, 10_000),
+      );
 
       handler.cleanupApp(managed);
 

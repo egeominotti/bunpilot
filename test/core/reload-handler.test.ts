@@ -2,11 +2,11 @@
 // bunpilot – ReloadHandler Unit Tests
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { ReloadHandler, type ReloadContext } from '../../src/core/reload-handler';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import type { AppConfig, WorkerInfo } from '../../src/config/types';
 import { WorkerLifecycle } from '../../src/core/lifecycle';
 import type { ProcessManager } from '../../src/core/process-manager';
-import type { AppConfig, WorkerInfo } from '../../src/config/types';
+import { type ReloadContext, ReloadHandler } from '../../src/core/reload-handler';
 
 // ---------------------------------------------------------------------------
 // Helper: minimal AppConfig
@@ -211,7 +211,7 @@ describe('ReloadHandler', () => {
       expect(drainedBeforeReady).toBe(false);
     });
 
-    test('proceeds after readyTimeout even if replacement is not online', async () => {
+    test('aborts after readyTimeout and preserves the old worker', async () => {
       const w1 = makeWorker(1);
       const workers = [w1];
       const config = makeConfig({ readyTimeout: 100 });
@@ -233,10 +233,11 @@ describe('ReloadHandler', () => {
         },
       };
 
-      await reloadHandler.rollingRestart(ctx);
+      await expect(reloadHandler.rollingRestart(ctx)).rejects.toThrow(
+        'reload aborted: replacement workers did not become ready',
+      );
 
-      // Should have drained even though replacement is still starting
-      expect(drained).toBe(true);
+      expect(drained).toBe(false);
     });
 
     test('handles empty workers list', async () => {

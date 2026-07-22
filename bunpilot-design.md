@@ -1,5 +1,7 @@
 # bunpilot - Design Document
 
+> Historical design document. Some implementation details and milestones below are obsolete; use `README.md` and `AGENTS.md` as the current source of truth.
+
 ## Bun-Native Process Manager
 
 **Single-binary, zero-dependency process manager costruito su Bun.**

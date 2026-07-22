@@ -7,10 +7,10 @@
 // ---------------------------------------------------------------------------
 
 import { loadConfig, loadFromCLI } from '../../config/loader';
-import { extractEnv } from '../index';
-import { logError, logSuccess, log } from '../format';
-import { sendCommand } from './_connect';
 import type { AppConfig } from '../../config/types';
+import { log, logError, logSuccess } from '../format';
+import { extractEnv } from '../index';
+import { sendCommand } from './_connect';
 
 // ---------------------------------------------------------------------------
 // Command
@@ -20,9 +20,6 @@ export async function startCommand(
   args: string[],
   flags: Record<string, string | boolean>,
 ): Promise<void> {
-  let config: AppConfig;
-  let name: string;
-
   // ---- Config-file mode ----
   if (flags.config) {
     const configPath = typeof flags.config === 'string' ? flags.config : undefined;
@@ -78,8 +75,9 @@ export async function startCommand(
     if (flags.instances === 'max') {
       instances = 'max';
     } else {
-      const parsed = parseInt(String(flags.instances), 10);
-      if (Number.isNaN(parsed)) {
+      const raw = String(flags.instances);
+      const parsed = Number(raw);
+      if (!/^\d+$/.test(raw) || !Number.isSafeInteger(parsed)) {
         logError(
           `Invalid --instances value: "${String(flags.instances)}". Expected a number or "max".`,
         );
@@ -95,8 +93,9 @@ export async function startCommand(
 
   let port: number | undefined;
   if (flags.port) {
-    const parsed = parseInt(String(flags.port), 10);
-    if (Number.isNaN(parsed)) {
+    const raw = String(flags.port);
+    const parsed = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(parsed)) {
       logError(`Invalid --port value: "${String(flags.port)}". Expected a number.`);
       process.exit(1);
     }
@@ -108,7 +107,7 @@ export async function startCommand(
   }
   const env = extractEnv(flags);
 
-  config = loadFromCLI({
+  const config: AppConfig = loadFromCLI({
     script,
     name: typeof flags.name === 'string' ? flags.name : undefined,
     instances,
@@ -116,7 +115,7 @@ export async function startCommand(
     env,
   });
 
-  name = config.name;
+  const name = config.name;
 
   log('start', `Starting "${name}" ...`);
   await sendCommand('start', { name, config }, { silent: true });

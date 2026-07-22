@@ -2,11 +2,11 @@
 // bunpm – Unit Tests: LogWriter
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, existsSync, unlinkSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { LogWriter } from '../../src/logs/writer';
+import { join } from 'node:path';
+import { LogWriter, rotatedLogPath } from '../../src/logs/writer';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -106,10 +106,10 @@ describe('LogWriter', () => {
     await writer.write('new data\n');
 
     expect(existsSync(logPath())).toBe(true);
-    expect(existsSync(`${logPath()}.1`)).toBe(true);
+    expect(existsSync(rotatedLogPath(logPath(), 1))).toBe(true);
 
     // The rotated file should contain the original large payload
-    const rotated = readFileSync(`${logPath()}.1`, 'utf-8');
+    const rotated = readFileSync(rotatedLogPath(logPath(), 1), 'utf-8');
     expect(rotated).toContain('A'.repeat(60));
 
     // The current file should contain the new data
@@ -127,8 +127,8 @@ describe('LogWriter', () => {
     await writer.write('bbbbbbbbbbbbbbbbbbbbb\n'); // 22 >= 20, rotate, then write
     await writer.write('ccccccccccccccccccccc\n'); // 22 >= 20, rotate again
 
-    expect(existsSync(`${logPath()}.1`)).toBe(true);
-    expect(existsSync(`${logPath()}.2`)).toBe(true);
+    expect(existsSync(rotatedLogPath(logPath(), 1))).toBe(true);
+    expect(existsSync(rotatedLogPath(logPath(), 2))).toBe(true);
 
     writer.close();
   });
@@ -141,10 +141,10 @@ describe('LogWriter', () => {
     await writer.write('cccccccccccccccccccccc\n');
 
     // .1 should exist (most recent rotated)
-    expect(existsSync(`${logPath()}.1`)).toBe(true);
+    expect(existsSync(rotatedLogPath(logPath(), 1))).toBe(true);
 
     // Files beyond maxFiles should not exist
-    expect(existsSync(`${logPath()}.3`)).toBe(false);
+    expect(existsSync(rotatedLogPath(logPath(), 3))).toBe(false);
 
     writer.close();
   });
@@ -165,7 +165,7 @@ describe('LogWriter', () => {
     await Promise.all([p1, p2]);
 
     // At least one rotated file should exist
-    expect(existsSync(`${logPath()}.1`)).toBe(true);
+    expect(existsSync(rotatedLogPath(logPath(), 1))).toBe(true);
 
     // No crash or corruption
     writer.close();
@@ -182,10 +182,10 @@ describe('LogWriter', () => {
     await writer.write('X'.repeat(200) + '\n');
 
     // After write, the post-write check should have rotated the oversized file
-    expect(existsSync(`${logPath()}.1`)).toBe(true);
+    expect(existsSync(rotatedLogPath(logPath(), 1))).toBe(true);
 
     // The rotated file should contain the large payload
-    const rotatedContent = readFileSync(`${logPath()}.1`, 'utf-8');
+    const rotatedContent = readFileSync(rotatedLogPath(logPath(), 1), 'utf-8');
     expect(rotatedContent).toContain('X'.repeat(200));
 
     writer.close();

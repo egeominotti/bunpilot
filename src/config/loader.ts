@@ -2,101 +2,13 @@
 // bunpilot – Config File Loader
 // ---------------------------------------------------------------------------
 
-import { resolve, join, extname } from 'node:path';
-import { CONFIG_FILES } from '../constants';
-import type { BunpilotConfig, AppConfig } from './types';
-import { validateConfig, validateApp } from './validator';
+import { loadConfigFile } from './file-loader';
+import type { AppConfig } from './types';
+import { validateApp } from './validator';
 
-// ---------------------------------------------------------------------------
-// Config file discovery
-// ---------------------------------------------------------------------------
-
-/**
- * Search for a config file in the given directory.
- * Checks each candidate in CONFIG_FILES order and returns the first that exists.
- */
-async function discoverConfigFile(dir: string): Promise<string | null> {
-  for (const filename of CONFIG_FILES) {
-    const candidate = join(dir, filename);
-    const file = Bun.file(candidate);
-    if (await file.exists()) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// File-type loaders
-// ---------------------------------------------------------------------------
-
-/**
- * Load a .ts or .js config file via dynamic import.
- * Expects a default export containing the raw config object.
- */
-async function loadModule(absolutePath: string): Promise<unknown> {
-  const mod = await import(absolutePath);
-  if (mod.default === undefined) {
-    throw new Error(`Config file "${absolutePath}" must have a default export.`);
-  }
-  return mod.default;
-}
-
-/**
- * Load a .json config file using Bun's native file API.
- */
-async function loadJson(absolutePath: string): Promise<unknown> {
-  return Bun.file(absolutePath).json();
-}
-
-/**
- * Dispatch to the correct loader based on file extension.
- */
-async function loadRawConfig(absolutePath: string): Promise<unknown> {
-  const ext = extname(absolutePath);
-  switch (ext) {
-    case '.ts':
-    case '.js':
-      return loadModule(absolutePath);
-    case '.json':
-      return loadJson(absolutePath);
-    default:
-      throw new Error(`Unsupported config file extension "${ext}". Use .ts, .js, or .json.`);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Load and validate a bunpilot config.
- *
- * @param configPath - Explicit path to a config file. When omitted the
- *   current working directory is searched for the standard config filenames
- *   (bunpilot.config.ts, bunpilot.config.js, bunpilot.json) in that order.
- *
- * @returns A fully validated `BunpilotConfig` with all defaults applied.
- */
-export async function loadConfig(configPath?: string): Promise<BunpilotConfig> {
-  let resolvedPath: string;
-
-  if (configPath) {
-    resolvedPath = resolve(configPath);
-    const file = Bun.file(resolvedPath);
-    if (!(await file.exists())) {
-      throw new Error(`Config file not found: ${resolvedPath}`);
-    }
-  } else {
-    const discovered = await discoverConfigFile(process.cwd());
-    if (!discovered) {
-      throw new Error(`No config file found. Create one of: ${CONFIG_FILES.join(', ')}`);
-    }
-    resolvedPath = resolve(discovered);
-  }
-
-  const raw = await loadRawConfig(resolvedPath);
-  return validateConfig(raw);
+/** Public config loader kept here alongside the CLI config builder. */
+export function loadConfig(configPath?: string) {
+  return loadConfigFile(configPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +57,7 @@ export function loadFromCLI(args: CLIArgs): AppConfig {
  *   "/opt/my-app.ts" -> "my-app"
  */
 function deriveAppName(script: string): string {
-  const base = script.split('/').pop() ?? script;
+  const base = script.split(/[\\/]/).pop() ?? script;
   const dotIndex = base.lastIndexOf('.');
   return dotIndex > 0 ? base.slice(0, dotIndex) : base;
 }

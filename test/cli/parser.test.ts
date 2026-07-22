@@ -2,8 +2,8 @@
 // bunpilot – Unit Tests for CLI Argument Parser
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect } from 'bun:test';
-import { parseArgs, extractEnv } from '../../src/cli/index';
+import { describe, expect, test } from 'bun:test';
+import { extractEnv, parseArgs } from '../../src/cli/index';
 
 // ---------------------------------------------------------------------------
 // parseArgs
@@ -116,6 +116,11 @@ describe('parseArgs', () => {
     expect(result.flags.port).toBe('8080');
   });
 
+  test('handles --socket as a value flag', () => {
+    const result = parseArgs(['bun', 'script', 'list', '--socket', '/tmp/custom.sock']);
+    expect(result.flags.socket).toBe('/tmp/custom.sock');
+  });
+
   test('handles unknown flags gracefully', () => {
     const result = parseArgs(['bun', 'script', 'start', '--custom', 'val']);
     expect(result.flags.custom).toBe('val');
@@ -168,25 +173,19 @@ describe('extractEnv', () => {
 
   // Bug 6: --env malformed input should throw
   test('throws for --env without = sign', () => {
-    expect(() =>
-      parseArgs(['bun', 'script', 'start', '--env', 'MY_VAR']),
-    ).toThrow('Invalid --env format: "MY_VAR". Expected KEY=VALUE.');
+    expect(() => parseArgs(['bun', 'script', 'start', '--env', 'MY_VAR'])).toThrow(
+      'Invalid --env format: "MY_VAR". Expected KEY=VALUE.',
+    );
   });
 
   test('throws for --env with = at position 0', () => {
-    expect(() =>
-      parseArgs(['bun', 'script', 'start', '--env', '=value']),
-    ).toThrow('Invalid --env format: "=value". Expected KEY=VALUE.');
+    expect(() => parseArgs(['bun', 'script', 'start', '--env', '=value'])).toThrow(
+      'Invalid --env format: "=value". Expected KEY=VALUE.',
+    );
   });
 
   test('accepts --env with = in value part', () => {
-    const parsed = parseArgs([
-      'bun',
-      'script',
-      'start',
-      '--env',
-      'KEY=val=ue',
-    ]);
+    const parsed = parseArgs(['bun', 'script', 'start', '--env', 'KEY=val=ue']);
     const env = extractEnv(parsed.flags);
     expect(env).toEqual({ KEY: 'val=ue' });
   });

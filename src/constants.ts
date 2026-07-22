@@ -2,16 +2,16 @@
 // bunpilot – Global Constants & Defaults
 // ---------------------------------------------------------------------------
 
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
 import type {
   AppConfig,
   BackoffConfig,
+  ClusteringConfig,
   HealthCheckConfig,
   LogsConfig,
   MetricsConfig,
-  ClusteringConfig,
 } from './config/types';
 
 // ---------------------------------------------------------------------------
@@ -116,5 +116,5 @@ export const HEARTBEAT_MISS_THRESHOLD = 3;
 
 /** Ensure the BUNPILOT_HOME directory tree exists. */
 export function ensureBunpilotHome(): void {
-  mkdirSync(BUNPILOT_HOME, { recursive: true });
+  mkdirSync(BUNPILOT_HOME, { recursive: true, mode: 0o700 });
 }

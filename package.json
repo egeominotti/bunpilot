@@ -1,27 +1,39 @@
 {
   "name": "bunpilot",
-  "version": "0.2.1",
-  "description": "Bun-native process manager. PM2 for the Bun ecosystem. (Experimental — not production ready)",
+  "version": "1.0.0",
+  "description": "Production-grade Bun-native process manager with clustering, health checks, and zero-downtime reloads.",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "src/public.ts",
+  "types": "src/public.ts",
   "exports": {
-    ".": "./src/index.ts",
+    ".": "./src/public.ts",
+    "./config": "./src/config/index.ts",
     "./worker": "./src/sdk/worker.ts",
-    "./sdk/worker": "./src/sdk/worker.ts"
+    "./sdk/worker": "./src/sdk/worker.ts",
+    "./package.json": "./package.json"
   },
   "bin": {
     "bunpilot": "src/index.ts"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build src/index.ts --compile --outfile bunpilot",
+    "build": "bun build src/index.ts --compile --minify --sourcemap=none --no-compile-autoload-dotenv --no-compile-autoload-bunfig --outfile bunpilot",
     "test": "bun test",
+    "test:unit": "bun test test --timeout 30000",
+    "test:model": "bun test test/model --timeout 30000",
+    "test:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov",
     "test:watch": "bun test --watch",
     "typecheck": "bun run tsc --noEmit",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
+    "version:check": "bun run scripts/check-version.ts",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "ci": "bun run check && bun run typecheck && bun run test",
+    "simulate": "bun run scripts/simulate.ts",
+    "simulate:cluster": "bun run scripts/simulate-cluster.ts",
     "prepare": "husky"
   },
   "keywords": [
@@ -54,14 +66,30 @@
     "url": "https://github.com/egeominotti/bunpilot/issues"
   },
   "license": "MIT",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "bun@1.3.14",
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.54.0",
-    "@typescript-eslint/parser": "^8.54.0",
+    "@biomejs/biome": "^2.5.5",
     "bun-types": "^1.3.9",
-    "eslint": "^9.39.2",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-prettier": "^5.5.5",
-    "husky": "^9.1.7",
-    "prettier": "^3.8.1"
+    "husky": "^9.1.7"
   }
 }

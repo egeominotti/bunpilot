@@ -2,12 +2,12 @@
 // bunpilot – Unit Tests for CLI Format Utilities
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import {
-  formatTable,
-  formatUptime,
   formatMemory,
   formatState,
+  formatTable,
+  formatUptime,
   log,
   logError,
   logSuccess,

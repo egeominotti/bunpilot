@@ -20,7 +20,7 @@ export class WorkerLifecycle {
   /** Check whether a transition from `from` to `to` is allowed. */
   canTransition(from: WorkerState, to: WorkerState): boolean {
     const allowed = TRANSITIONS[from];
-    return allowed !== undefined && allowed.includes(to);
+    return allowed?.includes(to) ?? false;
   }
 
   /**

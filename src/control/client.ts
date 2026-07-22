@@ -4,13 +4,14 @@
 
 import { existsSync } from 'node:fs';
 import type { ControlResponse, ControlStreamChunk } from '../config/types';
-import { encodeMessage, createRequest, decodeMessages } from './protocol';
+import { createRequest, encodeMessage, NdjsonFramer } from './protocol';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,19 +38,8 @@ function isControlResponse(msg: object): msg is ControlResponse {
  * exactly one place.
  */
 function createLineFramer(): (raw: string | Uint8Array) => object[] {
-  let buffer = '';
-  const decoder = new TextDecoder();
-
-  return (raw) => {
-    buffer += typeof raw === 'string' ? raw : decoder.decode(raw);
-
-    const lastNewline = buffer.lastIndexOf('\n');
-    if (lastNewline === -1) return [];
-
-    const complete = buffer.slice(0, lastNewline + 1);
-    buffer = buffer.slice(lastNewline + 1);
-    return decodeMessages(complete);
-  };
+  const framer = new NdjsonFramer();
+  return (raw) => framer.push(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -118,13 +108,16 @@ export class ControlClient {
           },
 
           data(s, raw) {
-            const messages = frame(raw);
-            if (messages.length === 0) return;
-
-            // We only expect one response per send()
-            const msg = messages[0];
-            if (isControlResponse(msg)) {
-              settle(() => resolve(msg));
+            try {
+              for (const msg of frame(raw)) {
+                if (isControlResponse(msg) && msg.id === req.id) {
+                  settle(() => resolve(msg));
+                  s.end();
+                  return;
+                }
+              }
+            } catch (error) {
+              settle(() => reject(error instanceof Error ? error : new Error(String(error))));
               s.end();
             }
           },
@@ -167,10 +160,22 @@ export class ControlClient {
     return new Promise<void>((resolve, reject) => {
       const frame = createLineFramer();
       let settled = false;
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const armIdleTimeout = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          settle(() =>
+            reject(new Error(`Stream idle timeout after ${DEFAULT_STREAM_IDLE_TIMEOUT_MS}ms`)),
+          );
+          streamSocket?.end();
+        }, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+      };
 
       const settle = (fn: () => void) => {
         if (settled) return;
         settled = true;
+        if (idleTimer) clearTimeout(idleTimer);
         fn();
       };
 
@@ -181,14 +186,33 @@ export class ControlClient {
         socket: {
           open(s) {
             streamSocket = s;
-            s.write(payload);
+            try {
+              s.write(payload);
+              armIdleTimeout();
+            } catch (error) {
+              settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+            }
           },
 
           data(_s, raw) {
-            const messages = frame(raw);
+            let messages: object[];
+            try {
+              messages = frame(raw);
+            } catch (error) {
+              settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+              streamSocket?.end();
+              return;
+            }
+            armIdleTimeout();
             for (const msg of messages) {
-              if (isStreamChunk(msg)) {
-                onChunk(msg);
+              if (isStreamChunk(msg) && msg.id === req.id) {
+                try {
+                  onChunk(msg);
+                } catch (error) {
+                  settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+                  streamSocket?.end();
+                  return;
+                }
                 if (msg.done) {
                   settle(() => resolve());
                   try {
@@ -198,7 +222,7 @@ export class ControlClient {
                   }
                   return;
                 }
-              } else if (isControlResponse(msg) && !msg.ok) {
+              } else if (isControlResponse(msg) && msg.id === req.id && !msg.ok) {
                 // Server sent an error response instead of a stream
                 settle(() => reject(new Error(msg.error ?? 'Unknown error')));
                 try {
@@ -212,7 +236,7 @@ export class ControlClient {
           },
 
           close() {
-            // Stream ended by server closing the connection – normal exit
+            // A stream may legitimately contain zero chunks; peer close is EOF.
             settle(() => resolve());
           },
 
