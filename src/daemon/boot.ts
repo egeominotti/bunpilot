@@ -27,15 +27,26 @@ import {
   formatPrometheus,
 } from '../metrics/prometheus';
 import { SqliteStore } from '../store/sqlite';
-import { removePidFile, writePidFile } from './pid';
+import { resolveStorePath } from './paths';
+import { isBunpilotWorkerProcess, removePidFile, writePidFile } from './pid';
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-/** Reject listener collisions for apps submitted after the daemon has started. */
-export function assertAppCompatibleWithDaemon(config: AppConfig, metricsPort: number): void {
-  if (config.port === metricsPort) {
+/**
+ * Reject listener collisions for apps submitted after the daemon has started.
+ * The public-port conflict only applies when the daemon actually bound the
+ * metrics port: with metrics disabled that port is free for user apps, so
+ * `metricsEnabled` gates the check (defaults true — the conservative
+ * "port is bound" assumption — for callers that don't know).
+ */
+export function assertAppCompatibleWithDaemon(
+  config: AppConfig,
+  metricsPort: number,
+  metricsEnabled = true,
+): void {
+  if (metricsEnabled && config.port === metricsPort) {
     throw new Error(
       `App public port ${config.port} conflicts with daemon metrics port ${metricsPort}`,
     );
@@ -56,119 +67,29 @@ export async function bootDaemon(configPath?: string): Promise<void> {
     loadedConfig = await loadConfig(configPath);
   }
 
-  const store = new SqliteStore();
-  const configuredMetrics = loadedConfig?.apps.find((app) => app.metrics?.enabled)?.metrics;
-  const metricsPort = configuredMetrics?.httpPort ?? DEFAULT_METRICS.httpPort ?? 9_615;
-  const master = new MasterOrchestrator([metricsPort]);
   const socketPath = resolve(loadedConfig?.daemon?.socketFile ?? SOCKET_PATH);
   const pidFile = resolve(loadedConfig?.daemon?.pidFile ?? PID_FILE);
 
-  // -- Pending configs: apps started via CLI are stored here -----------------
-  const pendingConfigs = new Map<string, AppConfig>();
+  // Derive the store path from this daemon's resolved paths — never the global
+  // default — so two daemons booted from different configs own distinct
+  // desired state instead of the second adopting the first's apps
+  // (h40 / BUG CLASS E).
+  const store = new SqliteStore(resolveStorePath(pidFile));
 
-  /** Snapshot of daemon state shared by status/dump endpoints. */
-  const snapshot = () => ({ apps: master.listApps(), uptime: process.uptime(), pid: process.pid });
-
-  // -- Build CommandContext adapter ------------------------------------------
-  const ctx: CommandContext = {
-    listApps: () => master.listApps(),
-
-    getApp: (name) => {
-      const status = master.getAppStatus(name);
-      return status ?? undefined;
-    },
-
-    startApp: async (name) => {
-      const config = pendingConfigs.get(name);
-      if (!config) throw new Error(`No config found for app "${name}"`);
-      store.saveApp(name, config);
-      try {
-        await master.startApp(config);
-        store.updateAppStatus(name, 'running');
-        pendingConfigs.delete(name);
-      } catch (error) {
-        store.updateAppStatus(name, 'stopped');
-        throw error;
-      }
-    },
-
-    stopApp: async (name) => {
-      await master.stopApp(name);
-      store.updateAppStatus(name, 'stopped');
-    },
-    restartApp: async (name, force) => {
-      await master.restartApp(name, force);
-      store.updateAppStatus(name, 'running');
-    },
-    reloadApp: (name) => master.reloadApp(name),
-    deleteApp: async (name) => {
-      await master.deleteApp(name);
-      store.deleteApp(name);
-    },
-
-    getMetrics: () => {
-      return master.listApps();
-    },
-
-    getLogs: (name, lines) => {
-      return readLogLines(LOGS_DIR, name, lines ?? 50);
-    },
-
-    dumpState: () => snapshot(),
-
-    shutdown: async () => {
-      await master.shutdown('daemon-kill');
-      process.exit(0);
-    },
-  };
-
-  // -- Command handler dispatch ----------------------------------------------
-  const handlers = createCommandHandlers(ctx);
-
-  const controlServer = new ControlServer(socketPath, async (cmd, args) => {
-    // For 'start', stash the config before the handler calls ctx.startApp
-    if (cmd === 'start' && args.config) {
-      const config = validateApp(args.config);
-      const name = (args.name as string) || config.name;
-      if (name !== config.name) {
-        return createErrorResponse('', 'Request name must match config.name');
-      }
-      try {
-        assertAppCompatibleWithDaemon(config, metricsPort);
-      } catch (error) {
-        return createErrorResponse('', error instanceof Error ? error.message : String(error));
-      }
-      pendingConfigs.set(name, config);
-    }
-
-    const handler = handlers.get(cmd);
-    if (!handler) {
-      return createErrorResponse('', `Unknown command: ${cmd}`);
-    }
-    return handler(args);
-  });
-
-  // -- Metrics HTTP server ----------------------------------------------------
-  const metricsProvider: MetricsDataProvider = {
-    getPrometheusMetrics: () => formatPrometheus(appStatusToMetricsInput(master.listApps())),
-    getJsonMetrics: (appName) => {
-      const apps = master.listApps();
-      if (appName) return apps.filter((a) => a.name === appName);
-      return apps;
-    },
-    getStatus: () => snapshot(),
-  };
-
-  const metricsServer = new MetricsHttpServer(metricsPort, metricsProvider);
-
-  // -- Register cleanup on master shutdown -----------------------------------
+  // Everything acquired below (control socket, metrics listener, store, PID
+  // file) is released by cleanup() on EVERY exit path — including a failed boot
+  // step such as the metrics listener being unable to bind its port. Without a
+  // spanning try/finally a partial boot leaks the already-bound control socket
+  // and the open store (h52 / BUG CLASS F).
+  let controlServer: ControlServer | null = null;
+  let metricsServer: MetricsHttpServer | null = null;
   let cleanedUp = false;
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
     for (const [label, action] of [
-      ['control server', () => controlServer.stop()],
-      ['metrics server', () => metricsServer.stop()],
+      ['metrics server', () => metricsServer?.stop()],
+      ['control server', () => controlServer?.stop()],
       ['store', () => store.close()],
       ['PID file', () => removePidFile(pidFile, process.pid)],
     ] as const) {
@@ -179,57 +100,237 @@ export async function bootDaemon(configPath?: string): Promise<void> {
       }
     }
   };
-  master.onShutdown(cleanup);
 
-  // -- Signal handlers -------------------------------------------------------
-  setupSignalHandlers({
-    onShutdown: async (sig) => {
-      console.log(`[daemon] received ${sig}, shutting down...`);
-      await master.shutdown(sig);
-    },
-    onReload: () => {
-      console.log('[daemon] received SIGHUP, reloading all apps...');
-      master.reloadAll().catch((err) => {
-        console.error('[daemon] reload error:', err);
-      });
-    },
-  });
+  try {
+    // -- Determine the desired app set (store restore + explicit config) -----
+    // Rows persisted as 'running' OR 'errored' are both retained: an 'errored'
+    // row is an app that was meant to run but hit a possibly-transient boot
+    // failure, so it must stay retryable across the next boot — selecting only
+    // 'running' would unregister it forever after one transient failure (h63).
+    const startupApps = new Map<string, AppConfig>();
+    for (const row of store.listApps()) {
+      if (row.status !== 'running' && row.status !== 'errored') continue;
+      try {
+        startupApps.set(row.name, validateApp(JSON.parse(row.config_json)));
+      } catch (error) {
+        store.updateAppStatus(row.name, 'errored');
+        console.error(`[daemon] cannot restore "${row.name}":`, error);
+      }
+    }
+    for (const app of loadedConfig?.apps ?? []) startupApps.set(app.name, app);
 
-  // -- Start control server --------------------------------------------------
-  await controlServer.start();
-  console.log(`[daemon] control server listening on ${socketPath}`);
+    // Only run the metrics HTTP server when at least one app actually enables
+    // metrics; otherwise the daemon must not steal the metrics TCP port and
+    // leave it unavailable to user apps (h66 / BUG CLASS F).
+    const configuredMetrics = [...startupApps.values()].find(
+      (app) => app.metrics?.enabled,
+    )?.metrics;
+    const metricsEnabled = configuredMetrics !== undefined;
+    const metricsPort = configuredMetrics?.httpPort ?? DEFAULT_METRICS.httpPort ?? 9_615;
 
-  // -- Start metrics HTTP server ---------------------------------------------
-  metricsServer.start();
-  console.log(`[daemon] metrics server listening on http://127.0.0.1:${metricsPort}`);
+    // Reserve the metrics port as an internal port ONLY when the metrics server
+    // is actually going to bind it; otherwise a metrics-disabled fleet must be
+    // free to use that port for a user app (h66 — the reservation is the
+    // orchestrator-side counterpart to the validator gate).
+    const master = new MasterOrchestrator(metricsEnabled ? [metricsPort] : []);
 
-  // -- Restore desired running state and apply an explicit config ------------
-  const startupApps = new Map<string, AppConfig>();
-  for (const row of store.listApps()) {
-    if (row.status !== 'running') continue;
-    try {
-      startupApps.set(row.name, validateApp(JSON.parse(row.config_json)));
-    } catch (error) {
-      store.updateAppStatus(row.name, 'errored');
-      console.error(`[daemon] cannot restore "${row.name}":`, error);
+    // -- Pending configs: apps started via CLI are stored here ---------------
+    const pendingConfigs = new Map<string, AppConfig>();
+
+    /** Snapshot of daemon state shared by status/dump endpoints. */
+    const snapshot = () => ({
+      apps: master.listApps(),
+      uptime: process.uptime(),
+      pid: process.pid,
+    });
+
+    // -- Build CommandContext adapter ----------------------------------------
+    const ctx: CommandContext = {
+      listApps: () => master.listApps(),
+
+      getApp: (name) => {
+        const status = master.getAppStatus(name);
+        return status ?? undefined;
+      },
+
+      startApp: async (name) => {
+        const config = pendingConfigs.get(name);
+        if (!config) throw new Error(`No config found for app "${name}"`);
+        // Persist desired state ONLY after the orchestrator accepts the start.
+        // A rejected start (e.g. `App "..." is already running.`) must be a pure
+        // no-op for persistence: the live app's (status, config_json,
+        // config_path) triple stays exactly as it was (h2/h19/h32/h67).
+        await master.startApp(config);
+        store.saveApp(name, config);
+        store.updateAppStatus(name, 'running');
+        pendingConfigs.delete(name);
+      },
+
+      stopApp: async (name) => {
+        await master.stopApp(name);
+        store.updateAppStatus(name, 'stopped');
+      },
+      restartApp: async (name, force) => {
+        await master.restartApp(name, force);
+        store.updateAppStatus(name, 'running');
+      },
+      reloadApp: (name) => master.reloadApp(name),
+      deleteApp: async (name) => {
+        await master.deleteApp(name);
+        store.deleteApp(name);
+      },
+
+      getMetrics: () => {
+        return master.listApps();
+      },
+
+      getLogs: (name, lines) => {
+        return readLogLines(LOGS_DIR, name, lines ?? 50);
+      },
+
+      dumpState: () => snapshot(),
+
+      shutdown: async () => {
+        await master.shutdown('daemon-kill');
+        process.exit(0);
+      },
+    };
+
+    // -- Command handler dispatch --------------------------------------------
+    const handlers = createCommandHandlers(ctx);
+
+    controlServer = new ControlServer(socketPath, async (cmd, args) => {
+      // For 'start', stash the config before the handler calls ctx.startApp
+      if (cmd === 'start' && args.config) {
+        const config = validateApp(args.config);
+        const name = (args.name as string) || config.name;
+        if (name !== config.name) {
+          return createErrorResponse('', 'Request name must match config.name');
+        }
+        try {
+          assertAppCompatibleWithDaemon(config, metricsPort, metricsEnabled);
+        } catch (error) {
+          return createErrorResponse('', error instanceof Error ? error.message : String(error));
+        }
+        pendingConfigs.set(name, config);
+      }
+
+      const handler = handlers.get(cmd);
+      if (!handler) {
+        return createErrorResponse('', `Unknown command: ${cmd}`);
+      }
+      return handler(args);
+    });
+
+    // -- Register cleanup on master shutdown ---------------------------------
+    master.onShutdown(cleanup);
+
+    // -- Signal handlers -----------------------------------------------------
+    setupSignalHandlers({
+      onShutdown: async (sig) => {
+        console.log(`[daemon] received ${sig}, shutting down...`);
+        await master.shutdown(sig);
+      },
+      onReload: () => {
+        console.log('[daemon] received SIGHUP, reloading all apps...');
+        master.reloadAll().catch((err) => {
+          console.error('[daemon] reload error:', err);
+        });
+      },
+    });
+
+    // -- Start control server ------------------------------------------------
+    await controlServer.start();
+    console.log(`[daemon] control server listening on ${socketPath}`);
+
+    // -- Start metrics HTTP server (only when some app enables metrics) ------
+    if (metricsEnabled) {
+      const metricsProvider: MetricsDataProvider = {
+        getPrometheusMetrics: () => formatPrometheus(appStatusToMetricsInput(master.listApps())),
+        getJsonMetrics: (appName) => {
+          const apps = master.listApps();
+          if (appName) return apps.filter((a) => a.name === appName);
+          return apps;
+        },
+        getStatus: () => snapshot(),
+      };
+      metricsServer = new MetricsHttpServer(metricsPort, metricsProvider);
+      try {
+        metricsServer.start();
+      } catch (error) {
+        // Surface the port so the failure is diagnosable, then let the spanning
+        // catch below release the already-bound control socket + store.
+        metricsServer = null;
+        throw new Error(
+          `Failed to bind metrics server on port ${metricsPort}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      console.log(`[daemon] metrics server listening on http://127.0.0.1:${metricsPort}`);
+    }
+
+    // -- Restore desired running state and apply an explicit config ----------
+    for (const app of startupApps.values()) {
+      try {
+        console.log(`[daemon] starting "${app.name}"`);
+        // Reconcile any workers orphaned by a previously SIGKILLed daemon before
+        // spawning a fresh generation, so restore converges to exactly
+        // `instances` processes instead of stacking a new generation on top of
+        // the orphans (h11).
+        reconcileOrphanedWorkers(store, app.name, app.script);
+        store.saveApp(app.name, app, configPath);
+        await master.startApp(app);
+        store.updateAppStatus(app.name, 'running');
+        persistWorkers(store, master, app.name);
+      } catch (error) {
+        store.updateAppStatus(app.name, 'errored');
+        console.error(`[daemon] failed to start "${app.name}":`, error);
+      }
+    }
+
+    writePidFile(pidFile, process.pid);
+    console.log(`[daemon] ready (pid=${process.pid})`);
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Boot-time worker reconciliation (h11)
+// ---------------------------------------------------------------------------
+
+/**
+ * Kill and forget any workers a prior daemon left behind. A daemon that dies by
+ * SIGKILL cannot take its workers down with it; they are reparented to init and
+ * keep running. Their PIDs are persisted after each successful start, so the
+ * next boot can converge to exactly `instances` processes per app.
+ */
+function reconcileOrphanedWorkers(store: SqliteStore, appName: string, script: string): void {
+  for (const worker of store.getWorkers(appName)) {
+    // Only kill a PID we can positively identify as still being THIS app's
+    // worker (its command line runs this exact script). Between the old daemon's
+    // death and this boot the OS may have reused the PID for an unrelated
+    // process; a bare liveness check would then SIGKILL that innocent process.
+    if (worker.pid && isBunpilotWorkerProcess(worker.pid, script)) {
+      try {
+        process.kill(worker.pid, 'SIGKILL');
+      } catch {
+        // Already gone.
+      }
     }
   }
-  for (const app of loadedConfig?.apps ?? []) startupApps.set(app.name, app);
+  store.clearWorkers(appName);
+}
 
-  for (const app of startupApps.values()) {
-    try {
-      console.log(`[daemon] starting "${app.name}"`);
-      store.saveApp(app.name, app, configPath);
-      await master.startApp(app);
-      store.updateAppStatus(app.name, 'running');
-    } catch (error) {
-      store.updateAppStatus(app.name, 'errored');
-      console.error(`[daemon] failed to start "${app.name}":`, error);
-    }
+/** Persist the PIDs of an app's freshly-spawned workers for later reconciliation. */
+function persistWorkers(store: SqliteStore, master: MasterOrchestrator, appName: string): void {
+  const status = master.getAppStatus(appName);
+  if (!status) return;
+  for (const worker of status.workers) {
+    store.saveWorker(appName, worker.id, worker.state, worker.pid || undefined);
   }
-
-  writePidFile(pidFile, process.pid);
-  console.log(`[daemon] ready (pid=${process.pid})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +343,8 @@ function appStatusToMetricsInput(apps: AppStatus[]): AppMetricsInput[] {
     workers: app.workers.map((w): AppWorkerMetrics => {
       const uptimeSeconds = (Date.now() - w.startedAt) / 1000;
       return {
-        workerId: w.id,
+        // Use the stable slot so the exposed label is bounded across reloads.
+        workerId: w.slot ?? w.id,
         metrics: w.memory
           ? {
               memory: {
@@ -250,9 +352,11 @@ function appStatusToMetricsInput(apps: AppStatus[]): AppMetricsInput[] {
                 heapTotal: w.memory.heapTotal,
                 heapUsed: w.memory.heapUsed,
                 external: w.memory.external,
+                arrayBuffers: w.memory.arrayBuffers,
               },
               cpuPercent: w.cpu?.percentage ?? 0,
               timestamp: w.memory.timestamp,
+              telemetry: w.telemetry ?? null,
             }
           : null,
         restartCount: w.restartCount,

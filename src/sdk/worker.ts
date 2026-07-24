@@ -7,9 +7,15 @@
 //
 // ---------------------------------------------------------------------------
 
-import type { WorkerMessage } from '../config/types';
+import type { WorkerMessage, WorkerMetricsPayload } from '../config/types';
 import { HEARTBEAT_INTERVAL } from '../constants';
 import { isValidMasterMessage } from '../ipc/protocol';
+import {
+  collectTelemetry,
+  createTelemetryState,
+  disposeTelemetryState,
+  type TelemetryState,
+} from './telemetry';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -58,8 +64,9 @@ export function bunpilotStartHeartbeat(interval: number = HEARTBEAT_INTERVAL): v
 /**
  * Register a graceful shutdown handler.
  *
- * When the master sends a `shutdown` message, the provided handler is invoked.
- * The handler may return a Promise for async cleanup (e.g. draining connections).
+ * When the master sends a `shutdown` message (or the process receives SIGTERM /
+ * SIGINT) the provided handler is invoked. The handler may return a Promise for
+ * async cleanup (e.g. draining connections).
  */
 export function bunpilotOnShutdown(handler: () => Promise<void> | void): void {
   if (typeof process.on !== 'function') return;
@@ -74,6 +81,10 @@ export function bunpilotOnShutdown(handler: () => Promise<void> | void): void {
 
 /** Active metrics interval handle – kept for cleanup. */
 let metricsTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Lazily-armed deep-telemetry collector state (heap / GC / stack). */
+let telemetryState: TelemetryState | null = null;
+let telemetryDeep = true;
 
 const shutdownHandlers = new Set<() => Promise<void> | void>();
 let messageDispatcherInstalled = false;
@@ -100,18 +111,35 @@ function stopTimers(): void {
 function collectMetrics(): void {
   const mem = process.memoryUsage();
   const cpu = process.cpuUsage();
-  send({
-    type: 'metrics',
-    payload: {
-      memory: {
-        rss: mem.rss,
-        heapTotal: mem.heapTotal,
-        heapUsed: mem.heapUsed,
-        external: mem.external,
-      },
-      cpu: { user: cpu.user, system: cpu.system },
+
+  const payload: WorkerMetricsPayload = {
+    memory: {
+      rss: mem.rss,
+      heapTotal: mem.heapTotal,
+      heapUsed: mem.heapUsed,
+      external: mem.external,
+      arrayBuffers: mem.arrayBuffers,
     },
-  });
+    cpu: { user: cpu.user, system: cpu.system },
+  };
+
+  // Deep telemetry (heap / GC / stack). Never let a telemetry failure suppress
+  // the basic memory + CPU sample the master relies on for liveness.
+  if (telemetryState) {
+    try {
+      const snapshot = collectTelemetry(telemetryState, telemetryDeep);
+      payload.memory.arrayBuffers = snapshot.arrayBuffers;
+      payload.heap = snapshot.heap;
+      payload.gc = snapshot.gc;
+      payload.stack = snapshot.stack;
+      payload.eventLoopLag = snapshot.stack.eventLoopLagMs;
+      payload.activeHandles = snapshot.stack.activeResources;
+    } catch {
+      // Degrade to memory + CPU only.
+    }
+  }
+
+  send({ type: 'metrics', payload });
 }
 
 function installMessageDispatcher(): void {
@@ -132,42 +160,101 @@ function installMessageDispatcher(): void {
 function installSignalHandlers(): void {
   if (signalHandlersInstalled || typeof process.on !== 'function') return;
   signalHandlersInstalled = true;
-  process.on('SIGTERM', () => void runShutdown(5_000));
-  process.on('SIGINT', () => void runShutdown(5_000));
+  process.on('SIGTERM', () => void runShutdown(readShutdownDeadline()));
+  process.on('SIGINT', () => void runShutdown(readShutdownDeadline()));
+}
+
+/**
+ * The graceful-shutdown deadline for the signal path. The master signals the
+ * worker and then escalates to SIGKILL after `killTimeout` ms, so the SDK must
+ * allow draining up to that same bound — not a hard-coded 5s (h56). The master
+ * injects `BUNPILOT_KILL_TIMEOUT`; standalone workers fall back to 5s.
+ */
+function readShutdownDeadline(): number {
+  const raw = Number(process.env.BUNPILOT_KILL_TIMEOUT);
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.min(raw, 300_000);
+  }
+  return 5_000;
 }
 
 function runShutdown(timeout: number): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
-  shutdownPromise = (async () => {
+  const promise = (async () => {
     stopTimers();
-    const cleanup = Promise.allSettled([...shutdownHandlers].map((handler) => handler()));
+    disposeTelemetry();
+
+    // Invoke each handler through Promise.resolve().then so a *synchronous*
+    // throw from any handler becomes a rejected promise that allSettled
+    // absorbs — instead of aborting the whole shutdown, skipping later
+    // handlers, and never reaching process.exit (h12 / h44).
+    const cleanup = Promise.allSettled(
+      [...shutdownHandlers].map((handler) => Promise.resolve().then(handler)),
+    );
+
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<void>((resolve) => {
       timeoutHandle = setTimeout(resolve, timeout);
+      timeoutHandle.unref?.();
     });
     await Promise.race([cleanup.then(() => undefined), deadline]);
     if (timeoutHandle) clearTimeout(timeoutHandle);
+
     process.exit(0);
     // `process.exit` never returns in production. Test doubles may return,
     // which lets subsequent tests exercise a fresh shutdown request.
     shutdownPromise = null;
   })();
+  // The latch must never be left in a rejected state: a rejected shutdownPromise
+  // would make every later runShutdown() return it and silently no-op. The IIFE
+  // above cannot reject (allSettled never throws), but guard defensively.
+  shutdownPromise = promise.catch(() => {
+    shutdownPromise = null;
+  });
   return shutdownPromise;
 }
 
+function disposeTelemetry(): void {
+  const state = telemetryState;
+  telemetryState = null;
+  if (state) {
+    try {
+      disposeTelemetryState(state);
+    } catch {
+      // Already disposed.
+    }
+  }
+}
+
 /**
- * Start periodic reporting of process metrics (memory + CPU) to the master.
+ * Start periodic reporting of process metrics to the master.
+ *
+ * Reports basic memory + CPU plus deep runtime telemetry (heap composition,
+ * derived GC pressure, and event-loop / stack health) unless `deep` is false,
+ * in which case the per-object-type heap census (the most expensive probe) is
+ * skipped.
  *
  * @param interval - Reporting interval in milliseconds (default 5000).
+ * @param options  - `{ deep }` toggles the per-object-type heap census.
  */
-export function bunpilotStartMetrics(interval: number = 5_000): void {
+export function bunpilotStartMetrics(interval = 5_000, options: { deep?: boolean } = {}): void {
   assertInterval(interval, 'metrics interval');
-  // Avoid duplicate intervals
+  telemetryDeep = options.deep ?? true;
+
+  // Avoid duplicate intervals.
   if (metricsTimer !== null) return;
+
+  if (telemetryState === null) {
+    try {
+      telemetryState = createTelemetryState();
+    } catch {
+      telemetryState = null;
+    }
+  }
 
   metricsTimer = setInterval(collectMetrics, interval);
 
-  // Unref so the timer does not prevent the process from exiting
+  // Unref so the timer does not prevent the process from exiting.
   if (metricsTimer && typeof metricsTimer.unref === 'function') {
     metricsTimer.unref();
   }

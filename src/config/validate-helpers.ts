@@ -126,10 +126,22 @@ export function validatePort(value: unknown, field: string, ctx: string): void {
 // Instances Validator
 // ---------------------------------------------------------------------------
 
+/**
+ * Upper bound on a numeric `instances` count. A single machine cannot serve
+ * more workers than this under any strategy (each clustered worker binds an
+ * internal port, and the internal port space is bounded), and validation must
+ * terminate in bounded time rather than looping over an attacker-controlled
+ * number. Well above any real deployment, far below the port-space ceiling.
+ */
+const MAX_INSTANCES = 1024;
+
 export function validateInstances(value: unknown, ctx: string): number | 'max' {
   if (value === 'max') return 'max';
   if (value === undefined || value === null) return 1;
   assertPositiveInt(value, 'instances', ctx);
+  if (value > MAX_INSTANCES) {
+    throw new Error(`[${ctx}] "instances" must be at most ${MAX_INSTANCES}. Got ${value}.`);
+  }
   return value;
 }
 
@@ -262,14 +274,41 @@ export function validateLogs(raw: unknown, ctx: string): LogsConfig {
     ['logs.outFile', outFile],
     ['logs.errFile', errFile],
   ] as const) {
-    if (filename && (isAbsolute(filename) || normalize(filename).split(/[\\/]/).includes('..'))) {
-      throw new Error(`[${ctx}] "${field}" must stay inside the app log directory.`);
-    }
+    if (filename) validateLogFilename(filename, field, ctx);
   }
   if (outFile) result.outFile = outFile;
   if (errFile) result.errFile = errFile;
 
   return result;
+}
+
+/**
+ * Validate a single custom log filename. It must stay strictly inside the app
+ * log directory (no absolute path, no `..` traversal), must name an actual file
+ * rather than resolving to the directory itself (a value like "." or "a/.."),
+ * and must end in ".log" so it rotates as `name.N.log` and stays readable by the
+ * log reader (both keyed on a trailing ".log").
+ */
+function validateLogFilename(filename: string, field: string, ctx: string): void {
+  if (isAbsolute(filename)) {
+    throw new Error(`[${ctx}] "${field}" must stay inside the app log directory.`);
+  }
+  const segments = normalize(filename)
+    .split(/[\\/]/)
+    .filter((segment) => segment.length > 0);
+  if (segments.includes('..')) {
+    throw new Error(`[${ctx}] "${field}" must stay inside the app log directory.`);
+  }
+  const meaningful = segments.filter((segment) => segment !== '.');
+  if (meaningful.length === 0) {
+    throw new Error(`[${ctx}] "${field}" must name a log file, not the app log directory itself.`);
+  }
+  const base = meaningful[meaningful.length - 1] as string;
+  if (base === '.log' || !base.endsWith('.log')) {
+    throw new Error(
+      `[${ctx}] "${field}" must end with ".log" so it rotates as name.N.log and stays readable.`,
+    );
+  }
 }
 
 export function validateMetrics(raw: unknown, ctx: string): MetricsConfig {

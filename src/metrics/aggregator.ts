@@ -29,12 +29,18 @@ export class MetricsAggregator {
     const cpuPercent =
       elapsedMicros > 0 && deltaMicros >= 0 ? (deltaMicros / elapsedMicros) * 100 : 0;
 
+    const telemetry =
+      payload.heap && payload.gc && payload.stack
+        ? { heap: payload.heap, gc: payload.gc, stack: payload.stack, timestamp }
+        : undefined;
+
     const metrics: WorkerMetricsData = {
       memory: { ...payload.memory },
       cpuPercent,
       timestamp,
       ...(payload.eventLoopLag === undefined ? {} : { eventLoopLag: payload.eventLoopLag }),
       ...(payload.activeHandles === undefined ? {} : { activeHandles: payload.activeHandles }),
+      ...(telemetry === undefined ? {} : { telemetry }),
       ...(payload.custom === undefined ? {} : { custom: { ...payload.custom } }),
     };
 
@@ -59,6 +65,7 @@ export class MetricsAggregator {
     return {
       ...metrics,
       memory: { ...metrics.memory },
+      ...(metrics.telemetry ? { telemetry: structuredClone(metrics.telemetry) } : {}),
       ...(metrics.custom === undefined ? {} : { custom: { ...metrics.custom } }),
     };
   }

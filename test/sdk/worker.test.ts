@@ -89,14 +89,13 @@ describe('bunpilotOnShutdown', () => {
       shutdownCalled = true;
     };
 
-    // Count listeners before
-    const listenersBefore = process.listenerCount('message');
-
     bunpilotOnShutdown(handler);
 
-    // A new message listener should be registered
-    const listenersAfter = process.listenerCount('message');
-    expect(listenersAfter).toBeGreaterThan(listenersBefore);
+    // The IPC message dispatcher must be installed so a 'message' listener
+    // exists. Installation is idempotent and process-global, so it may already
+    // have been installed by an earlier call in this process — assert presence,
+    // not a strict count increase, to stay independent of test file ordering.
+    expect(process.listenerCount('message')).toBeGreaterThanOrEqual(1);
     expect(shutdownCalled).toBe(false);
   });
 

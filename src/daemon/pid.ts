@@ -71,29 +71,54 @@ export function isBunpilotProcess(pid: number): boolean {
   } catch {
     return false;
   }
+  const cmd = readProcessCommand(pid);
+  return cmd !== null && isBunpilotCommand(cmd);
+}
 
+/**
+ * Best-effort check that the live process at `pid` is a bunpilot worker running
+ * `scriptRef`. Workers are spawned as `<runtime> run <script>`, so their command
+ * line contains the script path — pass the FULL stored `config.script` (not just
+ * its basename) so a PID the OS reused for an unrelated process that merely runs
+ * a same-named script is not matched. Used before SIGKILLing a persisted worker
+ * PID at boot: orphan reconciliation must be identity-verified.
+ */
+export function isBunpilotWorkerProcess(pid: number, scriptRef: string): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || scriptRef.length === 0) return false;
   try {
-    if (process.platform === 'linux') {
-      const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
-      return isBunpilotCommand(cmdline.replaceAll('\0', ' '));
-    }
-
-    // macOS / other Unix: use ps
-    const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8' }).trim();
-    return isBunpilotCommand(cmd);
+    process.kill(pid, 0);
   } catch {
     return false;
+  }
+  const cmd = readProcessCommand(pid);
+  return cmd?.replaceAll('\\', '/').includes(scriptRef.replaceAll('\\', '/')) ?? false;
+}
+
+/** Read a process's command line: `/proc/<pid>/cmdline` on Linux, else `ps`. */
+function readProcessCommand(pid: number): string | null {
+  try {
+    if (process.platform === 'linux') {
+      return readFileSync(`/proc/${pid}/cmdline`, 'utf-8').replaceAll('\0', ' ');
+    }
+    return execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8' }).trim();
+  } catch {
+    return null;
   }
 }
 
 function isBunpilotCommand(command: string): boolean {
-  const normalized = command.replaceAll('\\', '/').toLowerCase();
-  if (!/(?:^|\s)__daemon(?:\s|$)/.test(normalized)) return false;
-  return (
-    normalized.includes('bunpilot') ||
-    normalized.includes('/src/daemon/boot.') ||
-    normalized.includes('/src/index.')
-  );
+  // The daemon is always spawned with the hidden `__daemon` sub-command, which
+  // daemonize() appends as the FINAL argv token regardless of the install path
+  // ([execPath, '__daemon'] or [execPath, 'run', entry, '__daemon']). That
+  // marker — not the install path — is the stable identity signal, so a renamed
+  // or vendored binary is still recognized (h20 / BUG CLASS P).
+  //
+  // Requiring it to be the trailing token of a multi-token command line (rather
+  // than merely present somewhere) avoids treating an unrelated PID-reused
+  // process that happens to carry a stray `__daemon` argument as the daemon and
+  // then killing it.
+  const tokens = command.replaceAll('\\', '/').trim().split(/\s+/);
+  return tokens.length >= 2 && tokens[tokens.length - 1].toLowerCase() === '__daemon';
 }
 
 /**

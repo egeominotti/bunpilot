@@ -16,26 +16,33 @@ const DEFAULT_LINES = 50;
 const FOLLOW_POLL_INTERVAL = 1_000;
 const FOLLOW_POLL_LINES = 200;
 
-/** Return only lines after the longest recognizable suffix of the prior tail. */
+/**
+ * Return exactly the lines that were appended since the previous snapshot.
+ *
+ * The daemon tail is NOT a single append-only file: `readLogLines` concatenates
+ * every stream (`app-0-err`, `app-0-out`, ...) as a stable, per-stream block, so
+ * a new stderr line is INSERTED in the middle of the tail rather than appended
+ * at the very end. A trailing-suffix comparison would drop it forever. Instead
+ * we align `previous` as a subsequence of `current` from the end: any `current`
+ * line that does not line up with a `previous` line is new. This reports
+ * mid-inserted lines, tolerates lines rotated off the front of the window, and —
+ * matching `previous` greedily — surfaces a freshly appended duplicate line
+ * instead of hiding it.
+ */
 export function findNewLogLines(previous: string[], current: string[]): string[] {
   if (previous.length === 0) return current;
 
-  const maxOverlap = Math.min(previous.length, current.length);
-  for (let overlap = maxOverlap; overlap >= 1; overlap--) {
-    const suffix = previous.slice(previous.length - overlap);
-    for (let start = 0; start + overlap <= current.length; start++) {
-      let matches = true;
-      for (let offset = 0; offset < overlap; offset++) {
-        if (current[start + offset] !== suffix[offset]) {
-          matches = false;
-          break;
-        }
-      }
-      if (matches) return current.slice(start + overlap);
+  const appendedReversed: string[] = [];
+  let p = previous.length - 1;
+  for (let c = current.length - 1; c >= 0; c--) {
+    if (p >= 0 && current[c] === previous[p]) {
+      p--; // this line is carried over from the previous snapshot
+    } else {
+      appendedReversed.push(current[c]); // no counterpart in previous -> new
     }
   }
 
-  return current;
+  return appendedReversed.reverse();
 }
 
 // ---------------------------------------------------------------------------

@@ -1219,8 +1219,11 @@ describe('MasterOrchestrator', () => {
       const staleCallback = ctx.heartbeatStaleCallbacks.get(0);
       expect(staleCallback).toBeDefined();
 
-      // This should NOT leave the worker in 'online' state due to invalid transition
+      // This should NOT leave the worker in 'online' state due to invalid transition.
+      // The restart's check-and-launch now runs under the per-app lock, so it
+      // completes on a later microtask — await it before inspecting the state.
       staleCallback!(0);
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       const afterStatus = master.getAppStatus('transition-app');
       // Worker should be in 'starting' state after successful restart

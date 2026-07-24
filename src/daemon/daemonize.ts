@@ -105,10 +105,14 @@ export async function stopDaemon(pidFile: string = PID_FILE): Promise<boolean> {
     return true;
   }
 
-  // Verify the process is actually bunpilot (guard against PID reuse)
+  // Verify the process is actually bunpilot (guard against PID reuse). The
+  // process is still alive here (checked above), so a negative result is only
+  // ever a *failure to confirm* — never proof that it is a foreign process.
+  // Deleting the PID file in that case would abandon a possibly-live daemon
+  // that still holds the control socket, leaving it unkillable. Keep the PID
+  // record intact instead so a later stop can finish the job (h20 / BUG CLASS P).
   if (!isBunpilotProcess(pid)) {
-    console.log(`PID ${pid} is not a bunpilot process – cleaning up stale PID file`);
-    removePidFile(pidFile, pid);
+    console.log(`PID ${pid} could not be confirmed as a bunpilot daemon; leaving PID file intact`);
     return false;
   }
 

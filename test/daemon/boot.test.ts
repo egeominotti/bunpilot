@@ -24,6 +24,20 @@ describe('daemon runtime port compatibility', () => {
       ),
     ).toThrow('metrics');
   });
+
+  test('allows an app on the metrics port when the daemon has metrics disabled (h66)', async () => {
+    const bootModule = (await import('../../src/daemon/boot')) as Record<string, unknown>;
+    const assertCompatible = bootModule.assertAppCompatibleWithDaemon as (
+      config: { port?: number; metrics?: { enabled: boolean; httpPort?: number } },
+      metricsPort: number,
+      metricsEnabled?: boolean,
+    ) => void;
+    // Metrics disabled -> the daemon never bound the port, so a user app may use
+    // it (the CLI-start counterpart to the h66 validator + reservation gates).
+    expect(() => assertCompatible({ port: 9_615 }, 9_615, false)).not.toThrow();
+    // ...but with metrics enabled the collision is still rejected.
+    expect(() => assertCompatible({ port: 9_615 }, 9_615, true)).toThrow('metrics');
+  });
 });
 
 // ---------------------------------------------------------------------------

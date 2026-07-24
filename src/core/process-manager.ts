@@ -150,6 +150,9 @@ export class ProcessManager {
     base.BUNPILOT_WORKER_ID = String(workerId);
     base.BUNPILOT_APP_NAME = config.name;
     base.BUNPILOT_INSTANCES = String(config.instances);
+    // The SDK's SIGTERM/SIGINT drain must be bounded by the same killTimeout the
+    // master uses before escalating to SIGKILL, not a hard-coded 5s (h56).
+    base.BUNPILOT_KILL_TIMEOUT = String(config.killTimeout);
 
     // Port + reuse-port flag come from the shared policy so the health checker
     // (which probes the same port) can never disagree about what we bound.

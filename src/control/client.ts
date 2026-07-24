@@ -4,6 +4,7 @@
 
 import { existsSync } from 'node:fs';
 import type { ControlResponse, ControlStreamChunk } from '../config/types';
+import { SocketWriter } from '../util/socket-writer';
 import { createRequest, encodeMessage, NdjsonFramer } from './protocol';
 
 // ---------------------------------------------------------------------------
@@ -76,6 +77,7 @@ export class ControlClient {
       const frame = createLineFramer();
       let settled = false;
       let socket: ReturnType<typeof Bun.connect> extends Promise<infer S> ? S : never;
+      let writer: SocketWriter | null = null;
 
       const timer = setTimeout(() => {
         if (settled) return;
@@ -100,11 +102,16 @@ export class ControlClient {
         socket: {
           open(s) {
             socket = s;
+            writer = new SocketWriter(s);
             try {
-              s.write(payload);
+              writer.write(payload);
             } catch (err) {
               settle(() => reject(err instanceof Error ? err : new Error(String(err))));
             }
+          },
+
+          drain() {
+            writer?.flush();
           },
 
           data(s, raw) {
@@ -160,6 +167,7 @@ export class ControlClient {
     return new Promise<void>((resolve, reject) => {
       const frame = createLineFramer();
       let settled = false;
+      let writer: SocketWriter | null = null;
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
       const armIdleTimeout = () => {
@@ -186,12 +194,17 @@ export class ControlClient {
         socket: {
           open(s) {
             streamSocket = s;
+            writer = new SocketWriter(s);
             try {
-              s.write(payload);
+              writer.write(payload);
               armIdleTimeout();
             } catch (error) {
               settle(() => reject(error instanceof Error ? error : new Error(String(error))));
             }
+          },
+
+          drain() {
+            writer?.flush();
           },
 
           data(_s, raw) {

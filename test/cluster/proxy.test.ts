@@ -138,13 +138,16 @@ describe('ProxyCluster', () => {
   });
 
   describe('removeWorker', () => {
-    test('marks a worker as not alive', () => {
+    test('reclaims the worker id (slot is removed, not just marked dead)', () => {
+      // Retired worker ids must be reclaimed so a long-lived daemon's worker-id
+      // set stays bounded by the concurrently-configured instance count (h37) —
+      // removeWorker deletes the slot rather than leaving a dead one behind.
       initWorkerSlots(proxy, 3);
       proxy.addWorker(1);
       expect(getInternals(proxy).workers.get(1)!.alive).toBe(true);
 
       proxy.removeWorker(1);
-      expect(getInternals(proxy).workers.get(1)!.alive).toBe(false);
+      expect(getInternals(proxy).workers.get(1)).toBeUndefined();
     });
 
     test('is a no-op for out-of-range workerId', () => {
@@ -335,7 +338,8 @@ describe('ProxyCluster', () => {
       expect(getInternals(proxy).workers.get(5)!.alive).toBe(true);
 
       proxy.removeWorker(5);
-      expect(getInternals(proxy).workers.get(5)!.alive).toBe(false);
+      // The retired replacement id is reclaimed, not left as a dead slot (h37).
+      expect(getInternals(proxy).workers.get(5)).toBeUndefined();
     });
   });
 
@@ -370,11 +374,11 @@ describe('ProxyCluster', () => {
       proxy.removeWorker(1);
       const cacheAfterRemove = [...p.sortedWorkerIds];
 
-      // Cache should still be a valid array (same length since removeWorker
-      // marks alive=false but doesn't delete the slot)
+      // removeWorker reclaims the id: the slot is deleted and the cache is
+      // rebuilt one entry shorter, so retired ids never accumulate (h37).
       expect(Array.isArray(cacheAfterRemove)).toBe(true);
-      // Lengths are the same since the slot still exists, just marked dead
-      expect(cacheAfterRemove.length).toBe(cacheAfterAdd.length);
+      expect(cacheAfterRemove.length).toBe(cacheAfterAdd.length - 1);
+      expect(cacheAfterRemove).not.toContain(1);
     });
 
     test('nextAliveWorker does not create a new sorted array on each call', () => {

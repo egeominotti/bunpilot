@@ -2,7 +2,18 @@
 // bunpilot – Worker Exit / Restart / Stop Helpers
 // ---------------------------------------------------------------------------
 
-import type { AppConfig, WorkerInfo, WorkerMessage, WorkerState } from '../config/types';
+import type {
+  AppConfig,
+  GcMetrics,
+  HeapMetrics,
+  HeapObjectType,
+  StackMetrics,
+  WorkerInfo,
+  WorkerMessage,
+  WorkerMetricsPayload,
+  WorkerState,
+  WorkerTelemetry,
+} from '../config/types';
 import type { CrashRecovery } from './backoff';
 import type { WorkerLifecycle } from './lifecycle';
 import type { ProcessManager, SpawnedWorker } from './process-manager';
@@ -53,24 +64,7 @@ export class WorkerHandler {
         break;
 
       case 'metrics':
-        {
-          const timestamp = Date.now();
-          const previous = worker.cpu;
-          const cpuTotal = msg.payload.cpu.user + msg.payload.cpu.system;
-          const previousTotal = previous ? previous.user + previous.system : cpuTotal;
-          const elapsedMicros = previous ? (timestamp - previous.timestamp) * 1_000 : 0;
-          const deltaMicros = cpuTotal - previousTotal;
-          const percentage =
-            elapsedMicros > 0 && deltaMicros >= 0 ? (deltaMicros / elapsedMicros) * 100 : 0;
-
-          worker.memory = { ...msg.payload.memory, timestamp };
-          worker.cpu = {
-            user: msg.payload.cpu.user,
-            system: msg.payload.cpu.system,
-            percentage,
-            timestamp,
-          };
-        }
+        this.applyMetrics(worker, msg.payload);
         break;
 
       case 'heartbeat':
@@ -326,6 +320,45 @@ export class WorkerHandler {
   }
 
   // -----------------------------------------------------------------------
+  // Metrics ingestion (untrusted IPC input)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Fold a worker metrics payload into orchestrator state. The payload is
+   * untrusted IPC input that is re-serialized into every control-plane
+   * response (list/status/metrics), so only explicitly-named, finite fields
+   * are copied — never a spread of the raw object (h48) — and the derived CPU
+   * percentage is always finite so the JSON round-trip can't turn it into
+   * `null` and crash a `.toFixed()` consumer (h69).
+   */
+  private applyMetrics(worker: WorkerInfo, payload: WorkerMetricsPayload): void {
+    const timestamp = Date.now();
+    const previous = worker.cpu;
+
+    const user = sanitizeNonNeg(payload.cpu?.user);
+    const system = sanitizeNonNeg(payload.cpu?.system);
+    const cpuTotal = user + system;
+    const previousTotal = previous ? previous.user + previous.system : cpuTotal;
+    const elapsedMicros = previous ? (timestamp - previous.timestamp) * 1_000 : 0;
+    const deltaMicros = cpuTotal - previousTotal;
+    const rawPercentage =
+      elapsedMicros > 0 && deltaMicros >= 0 ? (deltaMicros / elapsedMicros) * 100 : 0;
+    const percentage = Number.isFinite(rawPercentage) ? rawPercentage : 0;
+
+    const mem = payload.memory ?? { rss: 0, heapTotal: 0, heapUsed: 0, external: 0 };
+    worker.memory = {
+      rss: sanitizeNonNeg(mem.rss),
+      heapTotal: sanitizeNonNeg(mem.heapTotal),
+      heapUsed: sanitizeNonNeg(mem.heapUsed),
+      external: sanitizeNonNeg(mem.external),
+      arrayBuffers: sanitizeNonNeg(mem.arrayBuffers),
+      timestamp,
+    };
+    worker.cpu = { user, system, percentage, timestamp };
+    worker.telemetry = sanitizeTelemetry(payload, timestamp);
+  }
+
+  // -----------------------------------------------------------------------
   // Shared utility
   // -----------------------------------------------------------------------
 
@@ -350,4 +383,88 @@ export class WorkerHandler {
   private workerKeyFromNamespace(namespace: string, workerId: number): string {
     return `${namespace}\0${workerId}`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Untrusted-metrics sanitizers
+// ---------------------------------------------------------------------------
+
+/** Coerce to a finite, non-negative number (untrusted IPC input). */
+function sanitizeNonNeg(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+/** Coerce to a finite number of any sign (e.g. net heap growth). */
+function sanitizeFinite(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/** Cap on retained object-type buckets per worker (bounds the snapshot). */
+const MAX_RETAINED_OBJECT_TYPES = 32;
+
+/**
+ * Build a fully-sanitized deep-telemetry snapshot from an untrusted payload,
+ * copying only known fields so nothing hostile leaks into orchestrator state.
+ * Returns null when the payload carries no telemetry.
+ */
+function sanitizeTelemetry(
+  payload: WorkerMetricsPayload,
+  timestamp: number,
+): WorkerTelemetry | null {
+  if (!payload.heap && !payload.gc && !payload.stack) return null;
+
+  const heap: HeapMetrics = {
+    heapSize: sanitizeNonNeg(payload.heap?.heapSize),
+    heapCapacity: sanitizeNonNeg(payload.heap?.heapCapacity),
+    extraMemory: sanitizeNonNeg(payload.heap?.extraMemory),
+    objectCount: sanitizeNonNeg(payload.heap?.objectCount),
+    protectedObjectCount: sanitizeNonNeg(payload.heap?.protectedObjectCount),
+    globalObjectCount: sanitizeNonNeg(payload.heap?.globalObjectCount),
+    usedHeapSize: sanitizeNonNeg(payload.heap?.usedHeapSize),
+    totalHeapSize: sanitizeNonNeg(payload.heap?.totalHeapSize),
+    heapSizeLimit: sanitizeNonNeg(payload.heap?.heapSizeLimit),
+    mallocedMemory: sanitizeNonNeg(payload.heap?.mallocedMemory),
+    peakMallocedMemory: sanitizeNonNeg(payload.heap?.peakMallocedMemory),
+    nativeContexts: sanitizeNonNeg(payload.heap?.nativeContexts),
+    detachedContexts: sanitizeNonNeg(payload.heap?.detachedContexts),
+    arrayBuffers: sanitizeNonNeg(payload.heap?.arrayBuffers),
+    topObjectTypes: sanitizeObjectTypes(payload.heap?.topObjectTypes),
+  };
+
+  const gc: GcMetrics = {
+    heapGrowthBytes: sanitizeFinite(payload.gc?.heapGrowthBytes),
+    allocationRateBytesPerSec: sanitizeNonNeg(payload.gc?.allocationRateBytesPerSec),
+    reclaimedBytes: sanitizeNonNeg(payload.gc?.reclaimedBytes),
+    inferredCollections: sanitizeNonNeg(payload.gc?.inferredCollections),
+    heapUtilization: sanitizeNonNeg(payload.gc?.heapUtilization),
+    compileTimeMs: sanitizeNonNeg(payload.gc?.compileTimeMs),
+  };
+
+  const stack: StackMetrics = {
+    eventLoopLagMs: sanitizeNonNeg(payload.stack?.eventLoopLagMs),
+    eventLoopLagMaxMs: sanitizeNonNeg(payload.stack?.eventLoopLagMaxMs),
+    eventLoopLagP99Ms: sanitizeNonNeg(payload.stack?.eventLoopLagP99Ms),
+    eventLoopUtilization: sanitizeNonNeg(payload.stack?.eventLoopUtilization),
+    activeResources: sanitizeNonNeg(payload.stack?.activeResources),
+    callStackDepth: sanitizeNonNeg(payload.stack?.callStackDepth),
+  };
+
+  return { heap, gc, stack, timestamp };
+}
+
+function sanitizeObjectTypes(value: unknown): HeapObjectType[] {
+  if (!Array.isArray(value)) return [];
+  const out: HeapObjectType[] = [];
+  for (const entry of value) {
+    if (out.length >= MAX_RETAINED_OBJECT_TYPES) break;
+    if (
+      entry &&
+      typeof entry === 'object' &&
+      typeof (entry as { type?: unknown }).type === 'string'
+    ) {
+      const type = (entry as { type: string }).type.slice(0, 128);
+      out.push({ type, count: sanitizeNonNeg((entry as { count?: unknown }).count) });
+    }
+  }
+  return out;
 }
