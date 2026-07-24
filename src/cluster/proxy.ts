@@ -22,24 +22,65 @@ interface WorkerSlot {
 }
 
 /**
- * Per-connection state attached to each public-facing socket.
+ * Minimal interface for the Bun sockets we pipe between.
  *
- * `upstream` is typed as `unknown` because Bun's internal Socket type uses
- * `Bun.BufferSource` which is structurally incompatible with the standard DOM
- * `BufferSource`.  We cast to a minimal interface at call sites instead.
+ * We only touch `write`/`end`/`pause`/`resume`, and we cast to this interface
+ * at the call sites because Bun's internal Socket type uses `Bun.BufferSource`
+ * which is structurally incompatible with the standard DOM `BufferSource`.
+ *
+ * `write` follows Bun's contract: it writes only what the kernel accepts *right
+ * now* and returns that count — it does NOT buffer the remainder. `pause`
+ * stops read events on the socket so the peer feels TCP backpressure; `resume`
+ * re-enables them.
  */
-interface ConnState {
-  upstream: unknown;
-  pending: Buffer[];
-  pendingBytes: number;
-  /** Set once the public client socket closes/errors. */
-  clientClosed: boolean;
-}
-
-/** Minimal interface for calling write/end on Bun sockets via cast. */
-interface WritableEnd {
+interface DuplexSocket {
   write(data: Buffer): number;
   end(): void;
+  pause(): void;
+  resume(): void;
+}
+
+/**
+ * One direction of a proxied connection: bytes accepted from a *source* socket
+ * that still owe delivery to a *sink* socket.
+ *
+ * When a `sink.write` goes short we retain the un-accepted tail here (in
+ * arrival order) and pause the source so no further bytes are read until the
+ * sink emits `drain` and we can flush. This is what guarantees CL-12 — "every
+ * byte accepted from one side is delivered to the other exactly once, in
+ * arrival order" — instead of silently dropping the tail of a partial write.
+ */
+interface Channel {
+  /** Un-flushed bytes, oldest first. */
+  queue: Buffer[];
+  /** Total bytes currently held in `queue`. */
+  bytes: number;
+  /** True while we've paused the source feeding this channel. */
+  sourcePaused: boolean;
+}
+
+/**
+ * Per-connection state attached to each public-facing socket.
+ */
+interface ConnState {
+  /** The public-facing client socket. */
+  client: DuplexSocket | null;
+  /** The internal worker socket, once `Bun.connect` has opened it. */
+  upstream: DuplexSocket | null;
+  /** Set once the public client socket closes/errors. */
+  clientClosed: boolean;
+  /** Bytes flowing client -> upstream (buffered before/around backpressure). */
+  toUpstream: Channel;
+  /** Bytes flowing upstream -> client (buffered around backpressure). */
+  toClient: Channel;
+  /** Upstream finished; `end()` the client once `toClient` fully drains. */
+  endClientWhenFlushed: boolean;
+  /** Client finished; `end()` the upstream once `toUpstream` fully drains. */
+  endUpstreamWhenFlushed: boolean;
+}
+
+function makeChannel(): Channel {
+  return { queue: [], bytes: 0, sourcePaused: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -51,7 +92,16 @@ interface WritableEnd {
  * using simple round-robin.
  */
 export class ProxyCluster {
-  private static readonly MAX_PENDING_BYTES = 1024 * 1024;
+  /**
+   * Per-direction, per-connection buffer bound. Real backpressure comes from
+   * pausing the source socket; this cap is the last-resort safety net. It sits
+   * well above the pause "lag" — `Socket.pause()` is not instantaneous, so up
+   * to a socket-receive-buffer's worth of already-read bytes can still arrive
+   * (and must be queued) after we pause — yet far below any realistic stream
+   * size, so genuinely unbounded growth still fails the connection closed
+   * instead of buffering without limit or silently dropping the tail.
+   */
+  private static readonly MAX_PENDING_BYTES = 8 * 1024 * 1024;
   /** Worker slots keyed by workerId. Supports non-contiguous IDs for replacement workers. */
   private workers: Map<number, WorkerSlot> = new Map();
 
@@ -89,22 +139,38 @@ export class ProxyCluster {
       port: publicPort,
       socket: {
         open: (socket) => {
-          socket.data = { upstream: null, pending: [], pendingBytes: 0, clientClosed: false };
-          this.handleConnection(socket as unknown as WritableEnd & { data: ConnState });
+          const state: ConnState = {
+            client: socket as unknown as DuplexSocket,
+            upstream: null,
+            clientClosed: false,
+            toUpstream: makeChannel(),
+            toClient: makeChannel(),
+            endClientWhenFlushed: false,
+            endUpstreamWhenFlushed: false,
+          };
+          socket.data = state;
+          this.handleConnection(socket as unknown as DuplexSocket & { data: ConnState });
         },
         data: (socket, data) => {
           const state = socket.data;
-          if (state.upstream) {
-            (state.upstream as WritableEnd).write(Buffer.from(data));
-          } else {
-            const chunk = Buffer.from(data);
-            state.pendingBytes += chunk.byteLength;
-            if (state.pendingBytes > ProxyCluster.MAX_PENDING_BYTES) {
-              state.pending.length = 0;
-              socket.end();
-              return;
-            }
-            state.pending.push(chunk);
+          // client -> upstream. Honour backpressure: queue any tail the
+          // upstream can't accept yet and pause reads from the client.
+          const ok = this.pushToChannel(
+            state.toUpstream,
+            state.upstream,
+            state.client,
+            Buffer.from(data),
+          );
+          if (!ok) this.destroyConn(state);
+        },
+        drain: (socket) => {
+          const state = socket.data;
+          // The client socket drained: flush whatever we still owe it and, once
+          // empty, resume reads from the upstream.
+          this.flushChannel(state.toClient, state.client, state.upstream);
+          if (state.endClientWhenFlushed && state.toClient.queue.length === 0) {
+            state.client?.end();
+            state.client = null;
           }
         },
         close: (socket) => {
@@ -133,13 +199,21 @@ export class ProxyCluster {
     this.rebuildSortedWorkerIds();
   }
 
-  /** Mark worker as dead so the proxy stops sending it traffic. */
+  /**
+   * Remove a worker so the proxy stops sending it traffic.
+   *
+   * CL-06: retired ids must be *reclaimed*, not merely flipped to `alive=false`.
+   * A long-lived daemon performs a fresh-id rolling reload on every restart, so
+   * leaving dead slots in the map lets `workers`/`sortedWorkerIds` grow without
+   * bound. Deleting the slot keeps the exposed worker-id set bounded by the
+   * app's concurrently-configured instance count. Round-robin over the
+   * remaining alive slots is unaffected (`nextAliveWorker` re-derives from the
+   * live map every time).
+   */
   removeWorker(workerId: number): void {
-    const slot = this.workers.get(workerId);
-    if (slot) {
-      slot.alive = false;
+    if (this.workers.delete(workerId)) {
+      this.rebuildSortedWorkerIds();
     }
-    this.rebuildSortedWorkerIds();
   }
 
   /** Stop the public listener and release all resources. */
@@ -160,6 +234,103 @@ export class ProxyCluster {
   /** Rebuild the cached sorted worker ID list from the current workers map. */
   private rebuildSortedWorkerIds(): void {
     this.sortedWorkerIds = Array.from(this.workers.keys()).sort((a, b) => a - b);
+    // Keep the round-robin cursor within bounds after the id set shrinks.
+    if (this.sortedWorkerIds.length === 0) {
+      this.rrIndex = 0;
+    } else if (this.rrIndex >= this.sortedWorkerIds.length) {
+      this.rrIndex %= this.sortedWorkerIds.length;
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Backpressure-aware piping
+  // -----------------------------------------------------------------------
+
+  /**
+   * Write `chunk` toward `sink`, preserving arrival order. Any tail the sink
+   * can't accept right now is queued and `source` is paused so no more bytes
+   * are read until the sink drains.
+   *
+   * Returns `false` when the channel exceeded its bound (the caller must fail
+   * the connection closed rather than buffer unboundedly).
+   */
+  private pushToChannel(
+    channel: Channel,
+    sink: DuplexSocket | null,
+    source: DuplexSocket | null,
+    chunk: Buffer,
+  ): boolean {
+    if (chunk.byteLength === 0) return true;
+
+    let tail = chunk;
+    // Only write straight through when nothing is already queued — otherwise we
+    // would reorder bytes ahead of the pending tail.
+    if (channel.queue.length === 0 && sink) {
+      const n = sink.write(chunk);
+      if (n >= chunk.byteLength) return true;
+      tail = n > 0 ? chunk.subarray(n) : chunk;
+    }
+
+    channel.queue.push(tail);
+    channel.bytes += tail.byteLength;
+
+    if (source && !channel.sourcePaused) {
+      source.pause();
+      channel.sourcePaused = true;
+    }
+
+    return channel.bytes <= ProxyCluster.MAX_PENDING_BYTES;
+  }
+
+  /**
+   * Flush a channel's queued bytes toward `sink` after a `drain`. Stops at the
+   * first short write (keeping `source` paused); once the queue empties it
+   * resumes `source` so reads can continue.
+   */
+  private flushChannel(
+    channel: Channel,
+    sink: DuplexSocket | null,
+    source: DuplexSocket | null,
+  ): void {
+    if (!sink) return;
+
+    while (channel.queue.length > 0) {
+      const head = channel.queue[0];
+      const n = sink.write(head);
+      if (n > 0) channel.bytes -= n;
+      if (n >= head.byteLength) {
+        channel.queue.shift();
+      } else {
+        if (n > 0) channel.queue[0] = head.subarray(n);
+        return; // still blocked — keep the source paused
+      }
+    }
+
+    if (channel.sourcePaused && source) {
+      source.resume();
+      channel.sourcePaused = false;
+    }
+  }
+
+  /** Fail a connection closed, dropping both buffers and ending both sockets. */
+  private destroyConn(state: ConnState): void {
+    state.clientClosed = true;
+    try {
+      state.upstream?.end();
+    } catch {
+      /* upstream may already be closed */
+    }
+    try {
+      state.client?.end();
+    } catch {
+      /* client may already be closed */
+    }
+    state.upstream = null;
+    state.client = null;
+    state.toUpstream.queue.length = 0;
+    state.toUpstream.bytes = 0;
+    state.toClient.queue.length = 0;
+    state.toClient.bytes = 0;
   }
 
   // -----------------------------------------------------------------------
@@ -197,9 +368,26 @@ export class ProxyCluster {
   private onClientGone(state: ConnState | undefined): void {
     if (!state) return;
     state.clientClosed = true;
+    state.client = null;
+
+    // Bytes still owed *to* the client are now undeliverable — drop them.
+    state.toClient.queue.length = 0;
+    state.toClient.bytes = 0;
+
+    // Bytes we already accepted *from* the client must still reach the upstream
+    // (deliver-exactly-once holds for the side that is still open). Flush what
+    // we can, then close the upstream once its queue drains.
     if (state.upstream) {
-      (state.upstream as WritableEnd).end();
-      state.upstream = null;
+      this.flushChannel(state.toUpstream, state.upstream, null);
+      if (state.toUpstream.queue.length === 0) {
+        state.upstream.end();
+        state.upstream = null;
+      } else {
+        state.endUpstreamWhenFlushed = true;
+      }
+    } else {
+      state.toUpstream.queue.length = 0;
+      state.toUpstream.bytes = 0;
     }
   }
 
@@ -207,7 +395,8 @@ export class ProxyCluster {
    * Handle a newly accepted public connection by piping it to an internal
    * worker port.
    */
-  private handleConnection(clientSocket: WritableEnd & { data: ConnState }): void {
+  private handleConnection(clientSocket: DuplexSocket & { data: ConnState }): void {
+    const clientState = clientSocket.data;
     const target = this.nextAliveWorker();
     if (!target) {
       clientSocket.end();
@@ -219,36 +408,67 @@ export class ProxyCluster {
       port: target.port,
       socket: {
         open: (upstream) => {
+          const upstreamSocket = upstream as unknown as DuplexSocket;
           // H5: the client may have closed while we were connecting upstream.
           // If so, drop the upstream immediately — don't adopt or flush to it.
-          if (clientSocket.data.clientClosed) {
-            (upstream as unknown as WritableEnd).end();
+          if (clientState.clientClosed) {
+            upstreamSocket.end();
             return;
           }
 
-          clientSocket.data.upstream = upstream;
+          clientState.upstream = upstreamSocket;
 
-          // Flush any data that arrived before upstream was ready.
-          for (const chunk of clientSocket.data.pending) {
-            (upstream as unknown as WritableEnd).write(chunk);
-          }
-          clientSocket.data.pending.length = 0;
-          clientSocket.data.pendingBytes = 0;
+          // Flush any data that arrived before upstream was ready, honouring
+          // upstream backpressure. If the flush can't complete, the client
+          // stays paused until the upstream drains.
+          this.flushChannel(clientState.toUpstream, upstreamSocket, clientState.client);
         },
         data: (_upstream, data) => {
-          clientSocket.write(Buffer.from(data));
+          // Client already gone: bytes from upstream have nowhere to go.
+          if (!clientState.client) return;
+          // upstream -> client. Queue any tail the client can't accept yet and
+          // pause reads from the upstream.
+          const ok = this.pushToChannel(
+            clientState.toClient,
+            clientState.client,
+            clientState.upstream,
+            Buffer.from(data),
+          );
+          if (!ok) this.destroyConn(clientState);
+        },
+        drain: () => {
+          // The upstream socket drained: flush whatever we still owe it and,
+          // once empty, resume reads from the client.
+          this.flushChannel(clientState.toUpstream, clientState.upstream, clientState.client);
+          if (clientState.endUpstreamWhenFlushed && clientState.toUpstream.queue.length === 0) {
+            clientState.upstream?.end();
+            clientState.upstream = null;
+          }
         },
         close: () => {
-          clientSocket.end();
+          // Upstream finished sending. Deliver everything still owed to the
+          // client before closing it — a half-close must not drop the tail.
+          clientState.upstream = null;
+          this.flushChannel(clientState.toClient, clientState.client, null);
+          if (clientState.toClient.queue.length === 0) {
+            clientState.client?.end();
+            clientState.client = null;
+          } else {
+            clientState.endClientWhenFlushed = true;
+          }
         },
         error: () => {
-          clientSocket.end();
+          // Upstream broke mid-stream: we can't trust the remainder, so tear
+          // the client down immediately.
+          clientState.upstream = null;
+          clientState.client?.end();
+          clientState.client = null;
         },
       },
     }).catch(() => {
       // Upstream connection failed – close the client socket to prevent leak.
       try {
-        clientSocket.end();
+        clientState.client?.end();
       } catch {
         /* client may already be closed */
       }

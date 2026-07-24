@@ -34,6 +34,8 @@ export interface MemoryMetrics {
   heapTotal: number;
   heapUsed: number;
   external: number;
+  /** ArrayBuffer / SharedArrayBuffer bytes (process.memoryUsage().arrayBuffers). */
+  arrayBuffers?: number;
   timestamp: number;
 }
 
@@ -45,11 +47,117 @@ export interface CpuMetrics {
 }
 
 // ---------------------------------------------------------------------------
+// Deep runtime telemetry (heap / GC / stack)
+// ---------------------------------------------------------------------------
+//
+// These describe the JavaScriptCore runtime state of a managed worker. They
+// are collected in-process by the worker SDK and reported over IPC. Every
+// value is a plain finite number so it survives the JSON round-trip through
+// the bounded control plane. Sub-objects are optional because an old worker
+// SDK (or a worker that opted out of deep telemetry) may omit them.
+// ---------------------------------------------------------------------------
+
+/** A single {objectType -> live instance count} bucket of the JSC heap. */
+export interface HeapObjectType {
+  type: string;
+  count: number;
+}
+
+/** Deep heap composition. Merges bun:jsc heapStats, node:v8 and process. */
+export interface HeapMetrics {
+  /** Live bytes on the JSC heap (bun:jsc heapStats().heapSize). */
+  heapSize: number;
+  /** Reserved bytes on the JSC heap (heapCapacity). */
+  heapCapacity: number;
+  /** Off-heap bytes accounted to the heap (extraMemorySize). */
+  extraMemory: number;
+  /** Total live object count. */
+  objectCount: number;
+  /** Objects protected from GC. */
+  protectedObjectCount: number;
+  /** Global objects (contexts / realms). */
+  globalObjectCount: number;
+  /** node:v8 used_heap_size. */
+  usedHeapSize: number;
+  /** node:v8 total_heap_size. */
+  totalHeapSize: number;
+  /** node:v8 heap_size_limit — the hard ceiling before OOM. */
+  heapSizeLimit: number;
+  /** node:v8 malloced_memory. */
+  mallocedMemory: number;
+  /** node:v8 peak_malloced_memory. */
+  peakMallocedMemory: number;
+  /** node:v8 number_of_native_contexts. */
+  nativeContexts: number;
+  /** node:v8 number_of_detached_contexts — a leak signal when > 0. */
+  detachedContexts: number;
+  /** process.memoryUsage().arrayBuffers. */
+  arrayBuffers: number;
+  /** Top object types by live count — the deep composition (bounded). */
+  topObjectTypes: HeapObjectType[];
+}
+
+/**
+ * GC pressure. Bun/JSC exposes no native GC event stream, so these are derived
+ * from successive heap samples taken by the worker itself (honest heuristic).
+ */
+export interface GcMetrics {
+  /** heapSize delta since the previous sample (negative = net reclaim). */
+  heapGrowthBytes: number;
+  /** Estimated allocation rate over the sample window. */
+  allocationRateBytesPerSec: number;
+  /** Bytes reclaimed since the previous sample (0 when the heap only grew). */
+  reclaimedBytes: number;
+  /** GC cycles inferred from heapSize drops (best-effort, cumulative). */
+  inferredCollections: number;
+  /** usedHeapSize / heapSizeLimit in [0,1] — proximity to the OOM ceiling. */
+  heapUtilization: number;
+  /** bun:jsc totalCompileTime() in ms — cumulative JIT pressure (0 if N/A). */
+  compileTimeMs: number;
+}
+
+/** Event-loop / execution-stack health of the worker. */
+export interface StackMetrics {
+  /** Mean event-loop delay over the sample window, ms. */
+  eventLoopLagMs: number;
+  /** Max event-loop delay over the sample window, ms. */
+  eventLoopLagMaxMs: number;
+  /** p99 event-loop delay over the sample window, ms. */
+  eventLoopLagP99Ms: number;
+  /** Event-loop utilization in [0,1] (fraction of wall time doing work). */
+  eventLoopUtilization: number;
+  /** Count of active libuv/JSC resources (process.getActiveResourcesInfo()). */
+  activeResources: number;
+  /**
+   * Depth of the telemetry collector's own sampling stack at capture time. This
+   * is a cheap liveness sample taken from inside the metrics timer, NOT the
+   * application's synchronous call depth (measuring that would need the sampling
+   * profiler). Present for completeness of the "stack" dimension.
+   */
+  callStackDepth: number;
+}
+
+/** The full deep-telemetry snapshot the master retains per worker. */
+export interface WorkerTelemetry {
+  heap: HeapMetrics;
+  gc: GcMetrics;
+  stack: StackMetrics;
+  timestamp: number;
+}
+
+// ---------------------------------------------------------------------------
 // Worker
 // ---------------------------------------------------------------------------
 
 export interface WorkerInfo {
   id: number;
+  /**
+   * Stable slot index in [0, instances) that identifies a worker position
+   * across zero-downtime reloads. A reload replacement inherits the slot of the
+   * worker it replaces, so the per-worker metric label set stays bounded by the
+   * instance count instead of growing with every reload. Defaults to `id`.
+   */
+  slot?: number;
   pid: number;
   state: WorkerState;
   startedAt: number;
@@ -61,6 +169,8 @@ export interface WorkerInfo {
   signalCode: string | null;
   memory: MemoryMetrics | null;
   cpu: CpuMetrics | null;
+  /** Latest deep runtime telemetry (heap / GC / stack), null until reported. */
+  telemetry?: WorkerTelemetry | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +189,7 @@ export interface WorkerMetricsPayload {
     heapTotal: number;
     heapUsed: number;
     external: number;
+    arrayBuffers?: number;
   };
   cpu: {
     user: number;
@@ -87,6 +198,12 @@ export interface WorkerMetricsPayload {
   eventLoopLag?: number;
   activeHandles?: number;
   activeRequests?: number;
+  /** Deep heap composition (bun:jsc + node:v8 + process). */
+  heap?: HeapMetrics;
+  /** Derived GC pressure. */
+  gc?: GcMetrics;
+  /** Event-loop / stack health. */
+  stack?: StackMetrics;
   custom?: Record<string, number>;
 }
 

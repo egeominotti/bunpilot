@@ -5,6 +5,7 @@
 import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ControlRequest, ControlResponse } from '../config/types';
+import { SocketWriter } from '../util/socket-writer';
 import { encodeMessage, MAX_CONTROL_FRAME_BYTES, NdjsonFramer } from './protocol';
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,7 @@ export type CommandHandler = (
 
 interface ClientState {
   framer: NdjsonFramer;
+  writer: SocketWriter;
 }
 
 interface SocketIdentity {
@@ -62,7 +64,10 @@ export class ControlServer {
       unix: this.socketPath,
       socket: {
         open: (socket) => {
-          this.clients.set(socket, { framer: new NdjsonFramer() });
+          this.clients.set(socket, {
+            framer: new NdjsonFramer(),
+            writer: new SocketWriter(socket),
+          });
         },
 
         data: (socket, raw) => {
@@ -71,17 +76,21 @@ export class ControlServer {
 
           try {
             for (const msg of state.framer.push(raw)) {
-              this.handleRequest(socket, msg);
+              this.handleRequest(state.writer, msg);
             }
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Invalid control frame';
             try {
-              socket.write(encodeMessage({ id: 'unknown', ok: false, error: message }));
+              state.writer.write(encodeMessage({ id: 'unknown', ok: false, error: message }));
               socket.end();
             } catch {
               // Connection may already be closed.
             }
           }
+        },
+
+        drain: (socket) => {
+          this.clients.get(socket)?.writer.flush();
         },
 
         close: (socket) => {
@@ -122,7 +131,7 @@ export class ControlServer {
   // Internal
   // -----------------------------------------------------------------------
 
-  private handleRequest(socket: { write(data: string | Uint8Array): number }, msg: object): void {
+  private handleRequest(writer: SocketWriter, msg: object): void {
     const req = msg as Partial<ControlRequest>;
 
     if (
@@ -138,7 +147,7 @@ export class ControlServer {
         ok: false,
         error: 'Invalid request: missing id or cmd',
       });
-      socket.write(errorPayload);
+      writer.write(errorPayload);
       return;
     }
 
@@ -149,7 +158,7 @@ export class ControlServer {
     this.handler(req.cmd, args as Record<string, unknown>)
       .then((response) => {
         try {
-          socket.write(this.encodeBoundedResponse(requestId, response));
+          writer.write(this.encodeBoundedResponse(requestId, response));
         } catch {
           // Client disconnected before response could be sent
         }
@@ -157,7 +166,7 @@ export class ControlServer {
       .catch((err) => {
         const errorMsg = err instanceof Error ? err.message : String(err);
         try {
-          socket.write(
+          writer.write(
             this.encodeBoundedResponse(requestId, { id: requestId, ok: false, error: errorMsg }),
           );
         } catch {

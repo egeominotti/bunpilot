@@ -15,7 +15,12 @@
 import { bindsWithReusePort } from '../cluster/policy';
 import type { ProxyCluster } from '../cluster/proxy';
 import type { WorkerInfo, WorkerMessage } from '../config/types';
-import { DEFAULT_LOGS, PORT_RELEASE_DELAY } from '../constants';
+import {
+  DEFAULT_LOGS,
+  HEARTBEAT_INTERVAL,
+  HEARTBEAT_MISS_THRESHOLD,
+  PORT_RELEASE_DELAY,
+} from '../constants';
 import type { HealthChecker } from '../health/checker';
 import type { LogManager } from '../logs/manager';
 import type { ProcessManager, SpawnedWorker } from './process-manager';
@@ -27,6 +32,13 @@ export interface LaunchDeps {
   logManager: LogManager;
   workerHandler: WorkerHandler;
   getProxy: (name: string) => ProxyCluster | undefined;
+  /**
+   * Run `fn` under the orchestrator's per-app lock. `restartWorker` uses this to
+   * serialize its final check-and-launch with reload/stop/delete so a retire
+   * that lands during the restart's awaits can't be raced (h16/h17). Optional so
+   * hand-built LaunchDeps in tests still work (runs `fn` directly).
+   */
+  runExclusive?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -95,23 +107,42 @@ export async function restartWorker(
     await sleep(PORT_RELEASE_DELAY);
   }
 
-  // Bug 3 fix: For non-standard restart paths (online/starting -> spawning),
-  // force the state to 'stopped' first so the transition to 'spawning' is valid.
-  if (!deps.workerHandler.transitionWorker(worker, 'spawning')) {
-    worker.state = 'stopped';
-    deps.workerHandler.transitionWorker(worker, 'spawning');
-  }
+  // Run the final check-and-launch under the per-app lock so it is atomic with
+  // reload/stop/delete: a reload holds the lock for its whole rolling restart,
+  // so either it retired this worker before we acquire the lock (the guard below
+  // aborts) or we launch first and its later retire kills the fresh pid — never
+  // an orphan (h16/h17/h57/h59).
+  const runExclusive = deps.runExclusive ?? ((_name, fn) => fn());
+  await runExclusive(managed.config.name, async () => {
+    // Resurrection guard: a stop / delete / restart / reload (or global
+    // shutdown, which stops every app) may have completed across the awaits
+    // above. `stopping` alone is unreliable — stopApp resets it in its `finally`
+    // (h5/h15/h61) — so also require the app to still be started AND this worker
+    // to still be a tracked member (retire splices it out, restart replaces the
+    // array: h16/h17/h23/h57/h59).
+    if (managed.stopping || managed.startedAt === null || !managed.workers.includes(worker)) {
+      managed.spawned.delete(worker.id);
+      return;
+    }
 
-  worker.restartCount += 1;
-  managed.spawned.delete(worker.id);
+    // Bug 3 fix: For non-standard restart paths (online/starting -> spawning),
+    // force the state to 'stopped' first so the transition to 'spawning' is valid.
+    if (!deps.workerHandler.transitionWorker(worker, 'spawning')) {
+      worker.state = 'stopped';
+      deps.workerHandler.transitionWorker(worker, 'spawning');
+    }
 
-  deps.workerHandler.transitionWorker(worker, 'starting');
-  worker.startedAt = Date.now();
-  worker.readyAt = null;
-  worker.exitCode = null;
-  worker.signalCode = null;
+    worker.restartCount += 1;
+    managed.spawned.delete(worker.id);
 
-  launchWorker(deps, managed, worker);
+    deps.workerHandler.transitionWorker(worker, 'starting');
+    worker.startedAt = Date.now();
+    worker.readyAt = null;
+    worker.exitCode = null;
+    worker.signalCode = null;
+
+    launchWorker(deps, managed, worker);
+  });
 }
 
 /** Schedule an async restart without unhandled rejections at sync call sites. */
@@ -166,22 +197,38 @@ function handleWorkerExit(
 ): void {
   deps.workerHandler.clearReadyTimer(managed, wid);
   deps.getProxy(managed.config.name)?.removeWorker(wid);
+  // A dead process generation must stop being probed immediately: otherwise its
+  // HTTP monitor keeps hitting the now-dead port, accumulates failures, and can
+  // declare the *replacement* unhealthy and restart it (h49). A crash-restart
+  // re-arms both monitors when the fresh generation launches.
+  deps.healthChecker.stopChecking(wid, managed.config.name);
+  deps.healthChecker.stopHeartbeatMonitor(wid, managed.config.name);
   deps.workerHandler.handleExit(managed, wid, code, sig, (m, w) => scheduleRestart(deps, m, w));
 }
 
 function startWorkerMonitors(deps: LaunchDeps, managed: ManagedApp, workerId: number): void {
+  // A worker only starts emitting heartbeats from inside bunpilotReady(), so a
+  // legitimately slow boot (migrations, cache warm-up) that legally consumes up
+  // to `readyTimeout` (validator allows up to 300s) has emitted nothing yet. The
+  // readyTimeout timer owns the boot window; give the heartbeat monitor a boot
+  // grace strictly larger than readyTimeout so it can never preempt it and kill
+  // a still-starting worker (h25/h28/h38).
+  const bootGrace = managed.config.readyTimeout + HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD;
   deps.healthChecker.startHeartbeatMonitor(
     workerId,
     (wid) => {
-      console.warn(`[master] worker ${wid} heartbeat stale`);
-      deps.healthChecker.stopChecking(wid, managed.config.name);
-      deps.healthChecker.stopHeartbeatMonitor(wid, managed.config.name);
       const w = deps.workerHandler.findWorker(managed, wid);
-      if (w && (w.state === 'online' || w.state === 'starting')) {
+      // Only act on a worker that actually came online and then went silent.
+      // A 'starting' worker is the readyTimeout timer's responsibility.
+      if (w && w.state === 'online') {
+        console.warn(`[master] worker ${wid} heartbeat stale`);
+        deps.healthChecker.stopChecking(wid, managed.config.name);
+        deps.healthChecker.stopHeartbeatMonitor(wid, managed.config.name);
         scheduleRestart(deps, managed, w);
       }
     },
     managed.config.name,
+    bootGrace,
   );
 }
 

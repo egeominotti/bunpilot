@@ -61,6 +61,13 @@ export class HealthChecker {
   /** When heartbeat monitoring began per worker (the grace-period baseline). */
   private monitorStartedAt: Map<string, number> = new Map();
 
+  /**
+   * Per-worker grace (ms) a worker that has never beaten yet is allowed before
+   * being declared stale. Defaults to the heartbeat window but the orchestrator
+   * raises it above `readyTimeout` so the boot window is owned by readyTimeout.
+   */
+  private bootGrace: Map<string, number> = new Map();
+
   /** Periodic heartbeat-monitor timers. */
   private heartbeatTimers: Map<string, Timer> = new Map();
 
@@ -187,13 +194,21 @@ export class HealthChecker {
    */
   isHeartbeatStale(workerId: number, namespace: string = ''): boolean {
     const key = this.key(workerId, namespace);
-    // Fall back to the monitor-start baseline when no genuine heartbeat has
-    // arrived yet, so a worker that never beats is still measured from start.
-    const last = this.lastHeartbeat.get(key) ?? this.monitorStartedAt.get(key);
-    if (last === undefined) return false;
+    const window = HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD;
 
-    const elapsed = Date.now() - last;
-    return elapsed >= HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD;
+    // Once a genuine heartbeat has arrived the normal missed-window applies.
+    const beat = this.lastHeartbeat.get(key);
+    if (beat !== undefined) {
+      return Date.now() - beat >= window;
+    }
+
+    // No heartbeat yet: measure from the monitor-start baseline, but honour the
+    // per-worker boot grace so a worker still inside its readyTimeout boot
+    // window is never declared stale (h25/h28/h38).
+    const start = this.monitorStartedAt.get(key);
+    if (start === undefined) return false;
+    const grace = this.bootGrace.get(key) ?? window;
+    return Date.now() - start >= grace;
   }
 
   /**
@@ -204,6 +219,7 @@ export class HealthChecker {
     workerId: number,
     onStale: (workerId: number) => void,
     namespace: string = '',
+    graceMs: number = HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD,
   ): void {
     this.stopHeartbeatMonitor(workerId, namespace);
     const key = this.key(workerId, namespace);
@@ -211,6 +227,7 @@ export class HealthChecker {
     // Record the monitor-start baseline (not a fake heartbeat) so staleness is
     // measured from start until the first genuine heartbeat arrives.
     this.monitorStartedAt.set(key, Date.now());
+    this.bootGrace.set(key, graceMs > 0 ? graceMs : HEARTBEAT_INTERVAL * HEARTBEAT_MISS_THRESHOLD);
 
     const timer = setInterval(() => {
       if (this.isHeartbeatStale(workerId, namespace)) {
@@ -231,6 +248,7 @@ export class HealthChecker {
     }
     this.lastHeartbeat.delete(key);
     this.monitorStartedAt.delete(key);
+    this.bootGrace.delete(key);
   }
 
   // -----------------------------------------------------------------------
@@ -254,6 +272,7 @@ export class HealthChecker {
     this.checking.clear();
     this.lastHeartbeat.clear();
     this.monitorStartedAt.clear();
+    this.bootGrace.clear();
   }
 
   // -----------------------------------------------------------------------

@@ -34,6 +34,8 @@ export class MasterOrchestrator {
   private readonly allocatedInternalPorts = new Set<number>();
   private readonly operationQueues = new Map<string, Promise<void>>();
   private shutdownPromise: Promise<void> | null = null;
+  /** Once true, no new app may be started/restarted/reloaded (shutdown is authoritative). */
+  private shuttingDown = false;
 
   constructor(reservedPorts: Iterable<number> = []) {
     for (const port of reservedPorts) {
@@ -74,6 +76,11 @@ export class MasterOrchestrator {
   }
 
   private async startAppUnlocked(config: AppConfig): Promise<void> {
+    // Shutdown is authoritative: a control command that lands inside the
+    // shutdown window must not spawn workers the daemon will then orphan (h46).
+    if (this.shuttingDown) {
+      throw new Error('Cannot start an app while the daemon is shutting down.');
+    }
     if (this.apps.has(config.name)) {
       throw new Error(`App "${config.name}" is already running.`);
     }
@@ -137,11 +144,17 @@ export class MasterOrchestrator {
     try {
       this.stopWorkerMonitors(managed);
       await this.workerHandler.stopAllWorkers(managed);
-      managed.startedAt = null;
-      this.stopProxy(name);
-      this.releaseAllWorkerPorts(managed);
       await this.logManager.closeApp?.(name);
     } finally {
+      // Teardown must release every internal-port reservation, drop every
+      // tracked pid, and mark the app stopped even if a kill failed part-way
+      // (h68) — ports and the spawned map are the daemon's global bookkeeping
+      // and must never leak on a failed stop.
+      managed.startedAt = null;
+      managed.spawned.clear();
+      managed.launchTokens.clear();
+      this.stopProxy(name);
+      this.releaseAllWorkerPorts(managed);
       managed.stopping = false;
     }
   }
@@ -155,6 +168,9 @@ export class MasterOrchestrator {
   }
 
   private async restartAppUnlocked(name: string, force = false): Promise<void> {
+    if (this.shuttingDown) {
+      throw new Error('Cannot restart an app while the daemon is shutting down.');
+    }
     const managed = this.getManaged(name);
     managed.stopping = true;
 
@@ -222,6 +238,9 @@ export class MasterOrchestrator {
   }
 
   private async reloadAppUnlocked(name: string): Promise<void> {
+    if (this.shuttingDown) {
+      throw new Error('Cannot reload an app while the daemon is shutting down.');
+    }
     const managed = this.getManaged(name);
     if (managed.startedAt === null || managed.stopping) {
       throw new Error(`App "${name}" is stopped; start or restart it before reloading.`);
@@ -238,14 +257,22 @@ export class MasterOrchestrator {
         lifecycle: this.lifecycle,
         spawnAndTrack: (_cfg, _wid) => {
           const newId = managed.nextWorkerId++;
+          // The replacement inherits the drained worker's stable slot so the
+          // exposed (app,worker) metric label set does not grow with reloads —
+          // it identifies a position, not a process generation (h54). The
+          // internal id stays monotonic; generation safety comes from per-launch
+          // tokens, not ids.
+          const inheritedSlot = currentWorkers.find((w) => w.id === _wid)?.slot ?? _wid;
           try {
             const worker = this.spawnWorker(managed, newId);
+            worker.slot = inheritedSlot;
             uncommittedReplacements.add(worker);
             replacementByOldId.set(_wid, worker);
             return worker;
           } catch (error) {
             const partial = managed.workers.find((worker) => worker.id === newId);
             if (partial) {
+              partial.slot = inheritedSlot;
               uncommittedReplacements.add(partial);
               replacementByOldId.set(_wid, partial);
             }
@@ -317,19 +344,24 @@ export class MasterOrchestrator {
 
   private async deleteAppUnlocked(name: string): Promise<void> {
     const managed = this.apps.get(name);
-    if (managed) {
-      managed.stopping = true;
-      try {
-        this.stopWorkerMonitors(managed);
-        await this.workerHandler.stopAllWorkers(managed);
-        this.workerHandler.cleanupApp(managed);
-        this.stopProxy(name);
-        this.releaseAllWorkerPorts(managed);
-        await this.logManager.closeApp?.(name);
-        this.apps.delete(name);
-      } finally {
-        managed.stopping = false;
-      }
+    if (!managed) return;
+    managed.stopping = true;
+    try {
+      this.stopWorkerMonitors(managed);
+      await this.workerHandler.stopAllWorkers(managed);
+      await this.logManager.closeApp?.(name);
+    } finally {
+      // deleteApp must leave NO internal-port reservation, NO tracked pid, and
+      // MUST unregister the app name even if a kill failed part-way (h68). Do all
+      // of this in finally so a partial teardown can't strand ports, leave
+      // spawned entries, or wedge the name.
+      this.workerHandler.cleanupApp(managed);
+      managed.spawned.clear();
+      this.stopProxy(name);
+      this.releaseAllWorkerPorts(managed);
+      managed.startedAt = null;
+      this.apps.delete(name);
+      managed.stopping = false;
     }
   }
 
@@ -361,6 +393,9 @@ export class MasterOrchestrator {
   }
 
   private async performShutdown(): Promise<void> {
+    // Latch shutdown so no start/restart/reload can race the teardown (h46).
+    this.shuttingDown = true;
+
     // Stop all health monitors first.
     this.healthChecker.stopAll();
 
@@ -423,6 +458,11 @@ export class MasterOrchestrator {
       logManager: this.logManager,
       workerHandler: this.workerHandler,
       getProxy: (name) => this.proxies.get(name),
+      // Serialize a restart's check-and-launch with reload/stop/delete on the
+      // same app so a retire can't be raced (h16/h17). scheduleRestart only ever
+      // fires from timers/callbacks (never inside a held lock), so this cannot
+      // deadlock.
+      runExclusive: (name, fn) => this.withAppLock(name, fn),
     };
   }
 

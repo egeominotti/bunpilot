@@ -37,11 +37,22 @@ const BOOLEAN_FLAGS: Record<string, string> = {
   '--force': 'force',
   '--json': 'json',
   '--prometheus': 'prometheus',
+  '--deep': 'deep',
+  '--follow': 'follow',
+  '-f': 'follow',
   '--help': 'help',
   '-h': 'help',
   '--version': 'version',
   '-v': 'version',
 };
+
+/** Values that make a boolean flag written as `--flag=value` resolve to false. */
+const FALSEY_BOOLEAN_VALUES = new Set(['false', '0', 'no', 'off', '']);
+
+/** Coerce the `=value` of a boolean flag to an actual boolean. */
+function parseBooleanValue(value: string): boolean {
+  return !FALSEY_BOOLEAN_VALUES.has(value.trim().toLowerCase());
+}
 
 // ---------------------------------------------------------------------------
 // Parser
@@ -73,7 +84,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
       const key = token.slice(0, eqIdx);
       const value = token.slice(eqIdx + 1);
 
-      if (key in VALUE_FLAGS) {
+      if (key in BOOLEAN_FLAGS) {
+        // A boolean flag must never carry a string value; `--force=false` is
+        // falsey, `--force=true` is truthy.
+        flags[BOOLEAN_FLAGS[key]] = parseBooleanValue(value);
+      } else if (key in VALUE_FLAGS) {
         addFlag(flags, VALUE_FLAGS[key], value);
       } else {
         // Unknown flag — store by stripped key

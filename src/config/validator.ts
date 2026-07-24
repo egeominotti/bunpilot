@@ -5,6 +5,8 @@
 import { basename, dirname, extname, join, normalize } from 'node:path';
 import { resolveInstances } from '../cluster/policy';
 import { APP_DEFAULTS, DEFAULT_METRICS } from '../constants';
+import { rotatedLogPath } from '../logs/writer';
+import type { LogsConfig } from './types';
 
 export { resolveInstances } from '../cluster/policy';
 
@@ -46,6 +48,11 @@ export function validateApp(raw: unknown): AppConfig {
   assertString(raw.script, 'script', ctx);
   if (raw.name === '.' || raw.name === '..') {
     throw new Error(`[${ctx}] "name" must not be "." or "..".`);
+  }
+  if (raw.name === 'all') {
+    throw new Error(
+      `[${ctx}] "name" must not be the reserved wildcard "all"; it is the CLI fleet-wide sentinel.`,
+    );
   }
   if (/[\\/]/.test(raw.name)) {
     throw new Error(`[${ctx}] "name" must not contain path separators.`);
@@ -120,29 +127,73 @@ export function validateApp(raw: unknown): AppConfig {
   return config;
 }
 
-/** Ensure worker suffixing cannot make stdout and stderr share another worker's file. */
+/**
+ * Ensure no two distinct log writers ever touch the same on-disk path — neither
+ * a live file nor any of its rotated forms `name.1.log`..`name.maxFiles.log`.
+ *
+ * This mirrors LogManager exactly: default filenames are `${name}-${workerId}-
+ * out.log` / `-err.log`, custom filenames are worker-suffixed for workerId > 0,
+ * and when a worker's stdout and stderr resolve to one file they share a single
+ * writer (the intentional merged-stream case, which is therefore allowed).
+ * `LogWriter.rotate()` renames over its destinations with no existence guard, so
+ * any overlap between two distinct writers means one silently destroys another.
+ */
 function validateLogPathCollisions(config: AppConfig, ctx: string): void {
-  const outFile = config.logs?.outFile;
-  const errFile = config.logs?.errFile;
-  if (!outFile || !errFile) return;
+  const logs = config.logs;
+  if (!logs) return;
 
-  const paths = new Map<string, { workerId: number; stream: string }>();
+  const maxFiles = logs.maxFiles;
   const instances = resolveInstances(config.instances);
+  const owners = new Map<string, string>();
+
   for (let workerId = 0; workerId < instances; workerId++) {
-    for (const [stream, filename] of [
-      ['stdout', outFile],
-      ['stderr', errFile],
-    ] as const) {
-      const path = normalize(addWorkerSuffix(filename, workerId));
-      const previous = paths.get(path);
-      if (previous && previous.workerId !== workerId) {
-        throw new Error(
-          `[${ctx}] log files for worker ${workerId} ${stream} and worker ${previous.workerId} ${previous.stream} collide at "${path}".`,
-        );
+    const outPath = normalize(resolveStreamFilename(config.name, logs, 'stdout', workerId));
+    const errPath = normalize(resolveStreamFilename(config.name, logs, 'stderr', workerId));
+
+    // A single shared writer when both streams resolve to one file — no
+    // self-collision to guard against in that case.
+    const writers: Array<{ key: string; base: string }> = [
+      { key: `worker ${workerId} stdout`, base: outPath },
+    ];
+    if (errPath !== outPath) {
+      writers.push({ key: `worker ${workerId} stderr`, base: errPath });
+    }
+
+    for (const writer of writers) {
+      for (const path of ownedLogPaths(writer.base, maxFiles)) {
+        const previous = owners.get(path);
+        if (previous !== undefined && previous !== writer.key) {
+          throw new Error(
+            `[${ctx}] log files for ${writer.key} and ${previous} collide at "${path}"; ` +
+              `one stream would rotate over the other.`,
+          );
+        }
+        owners.set(path, writer.key);
       }
-      paths.set(path, { workerId, stream });
     }
   }
+}
+
+/** Resolve the on-disk filename a worker's stream writes to (mirrors LogManager). */
+function resolveStreamFilename(
+  appName: string,
+  logs: LogsConfig,
+  stream: 'stdout' | 'stderr',
+  workerId: number,
+): string {
+  const custom = stream === 'stdout' ? logs.outFile : logs.errFile;
+  if (custom) return addWorkerSuffix(custom, workerId);
+  const suffix = stream === 'stdout' ? 'out' : 'err';
+  return `${appName}-${workerId}-${suffix}.log`;
+}
+
+/** Every path a writer may create or rename over: its live file plus rotations. */
+function ownedLogPaths(base: string, maxFiles: number): string[] {
+  const paths = [base];
+  for (let index = 1; index <= maxFiles; index++) {
+    paths.push(normalize(rotatedLogPath(base, index)));
+  }
+  return paths;
 }
 
 function addWorkerSuffix(filename: string, workerId: number): string {
@@ -218,13 +269,19 @@ export function validateConfig(raw: unknown): BunpilotConfig {
     apps.push(app);
   }
 
-  const daemonMetricsPort = metricsPort?.port ?? DEFAULT_METRICS.httpPort;
-  if (daemonMetricsPort !== undefined) {
-    const conflictingApp = seenPorts.get(daemonMetricsPort);
-    if (conflictingApp) {
-      throw new Error(
-        `Port ${daemonMetricsPort} is used by app "${conflictingApp}" and the daemon metrics listener.`,
-      );
+  // The daemon only binds a metrics port when at least one app enables metrics.
+  // When every app disables metrics the listener never starts, so that port
+  // (including the default 9615) must stay free for user apps (h66).
+  const anyMetricsEnabled = apps.some((app) => app.metrics?.enabled === true);
+  if (anyMetricsEnabled) {
+    const daemonMetricsPort = metricsPort?.port ?? DEFAULT_METRICS.httpPort;
+    if (daemonMetricsPort !== undefined) {
+      const conflictingApp = seenPorts.get(daemonMetricsPort);
+      if (conflictingApp) {
+        throw new Error(
+          `Port ${daemonMetricsPort} is used by app "${conflictingApp}" and the daemon metrics listener.`,
+        );
+      }
     }
   }
 

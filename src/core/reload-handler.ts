@@ -60,8 +60,17 @@ export class ReloadHandler {
       // losing workers after the full readyTimeout.
       await this.waitForReady(replacements, config.readyTimeout);
 
-      // (c) + (d) Drain and stop old workers.
-      await Promise.all(batch.map((w) => ctx.drainAndStop(w)));
+      // (c) + (d) Drain and stop old workers. Use allSettled, not Promise.all:
+      // Promise.all rejects on the FIRST failing drain while its siblings are
+      // still awaiting killWorker, and the caller's catch would then retire a
+      // sibling's replacement while that sibling drain is mid-flight — killing
+      // both members of the pair (h60). Waiting for every drain to settle before
+      // surfacing the failure keeps the batch consistent.
+      const drainResults = await Promise.allSettled(batch.map((w) => ctx.drainAndStop(w)));
+      const firstFailure = drainResults.find((r) => r.status === 'rejected');
+      if (firstFailure && firstFailure.status === 'rejected') {
+        throw firstFailure.reason;
+      }
 
       // (e) Inter-batch delay (skip after the last batch).
       if (i < batches.length - 1 && batchDelay > 0) {
