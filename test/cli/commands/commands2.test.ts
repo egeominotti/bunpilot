@@ -6,24 +6,36 @@
 // mocking the _connect helpers (sendCommand, requireArg) or the daemon/pid
 // modules and capturing console output.
 //
-// IMPORTANT: This file uses mock.module() to replace _connect globally.
-// It is placed in test/cli/commands/ (a subdirectory) to avoid polluting
-// the module registry for test/cli/connect.test.ts, which imports _connect
-// directly.
+// IMPORTANT: This file uses mock.module() to replace _connect, daemonize and
+// pid globally. Directory placement alone does NOT contain that: `mock.module`
+// overrides persist for the whole bun process and `mock.restore()` does not
+// revert them, so the snapshot below is what actually keeps the stubs from
+// leaking into files that run later in the same process.
 // ---------------------------------------------------------------------------
 
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as connectNamespace from '../../../src/cli/commands/_connect';
+import * as daemonizeNamespace from '../../../src/daemon/daemonize';
+import * as pidNamespace from '../../../src/daemon/pid';
 
 // ---------------------------------------------------------------------------
-// Global Teardown – restore all mocked modules so they don't leak to other
-// test files that may run in the same Bun process.
+// Global Teardown – reinstall the REAL modules so the stubs cannot leak into
+// other test files sharing this Bun process. Snapshot by value: a module
+// namespace is a live binding, so mock.module would rewrite a bare reference.
 // ---------------------------------------------------------------------------
+
+const realConnect = { ...connectNamespace };
+const realDaemonize = { ...daemonizeNamespace };
+const realPid = { ...pidNamespace };
 
 afterAll(() => {
   mock.restore();
+  mock.module('../../../src/cli/commands/_connect', () => realConnect);
+  mock.module('../../../src/daemon/daemonize', () => realDaemonize);
+  mock.module('../../../src/daemon/pid', () => realPid);
 });
 
 // ---------------------------------------------------------------------------

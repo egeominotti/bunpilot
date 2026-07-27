@@ -6,15 +6,31 @@
 //            deleteCommand, listCommand
 //
 // Strategy: each test uses mock.module() + dynamic import (await import())
-// to inject mock implementations of _connect helpers per test. This avoids
-// global mock pollution that would affect other test files.
+// to inject mock implementations of _connect helpers per test.
+//
+// `mock.module` overrides persist for the WHOLE bun process and `mock.restore()`
+// does NOT revert them (see test/_hunt/h45.test.ts, which documents the same
+// trap). Without the snapshot below, the `loadFromCLI` stub here leaked into
+// test/config/loader.test.ts whenever the runner happened to visit this file
+// first — 49 of its tests then saw `name: 'test-app'` instead of the real
+// derived name. That reproduced on ubuntu CI and not on macOS purely because
+// the file walk order differs.
 // ---------------------------------------------------------------------------
 
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import * as connectNamespace from '../../src/cli/commands/_connect';
+import * as loaderNamespace from '../../src/config/loader';
 import type { AppStatus, ControlResponse, WorkerInfo } from '../../src/config/types';
+
+// Snapshot BY VALUE at module-eval time: a module namespace is a live binding,
+// so `mock.module` would otherwise rewrite even a captured reference.
+const realConnect = { ...connectNamespace };
+const realLoader = { ...loaderNamespace };
 
 afterAll(() => {
   mock.restore();
+  mock.module('../../src/cli/commands/_connect', () => realConnect);
+  mock.module('../../src/config/loader', () => realLoader);
 });
 
 // ---------------------------------------------------------------------------
