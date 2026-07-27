@@ -149,7 +149,9 @@ describe('bunpilotOnShutdown', () => {
     const originalExit = process.exit;
     (process as { exit: Function }).exit = () => {};
 
-    bunpilotOnShutdown(() => calls.push('first'));
+    bunpilotOnShutdown(() => {
+      calls.push('first');
+    });
     bunpilotOnShutdown(async () => {
       await Promise.resolve();
       calls.push('second');

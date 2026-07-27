@@ -116,6 +116,12 @@ describe('INTERNAL_ENV_KEYS', () => {
     expect(INTERNAL_ENV_KEYS.has('BUNPILOT_DAEMON')).toBe(true);
   });
 
+  test('contains BUNPILOT_CONFIG', () => {
+    // daemonize() passes the config path in the child env; workers inherit the
+    // daemon's env, so it must be stripped before it reaches them.
+    expect(INTERNAL_ENV_KEYS.has('BUNPILOT_CONFIG')).toBe(true);
+  });
+
   test('contains BUNPILOT_CONTROL_SOCKET', () => {
     expect(INTERNAL_ENV_KEYS.has('BUNPILOT_CONTROL_SOCKET')).toBe(true);
   });
@@ -124,8 +130,8 @@ describe('INTERNAL_ENV_KEYS', () => {
     expect(INTERNAL_ENV_KEYS.has('BUNPILOT_INTERNAL_PORT_BASE')).toBe(true);
   });
 
-  test('has exactly 3 entries', () => {
-    expect(INTERNAL_ENV_KEYS.size).toBe(3);
+  test('has exactly 4 entries', () => {
+    expect(INTERNAL_ENV_KEYS.size).toBe(4);
   });
 });
 

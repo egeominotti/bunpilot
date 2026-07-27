@@ -114,20 +114,42 @@ export class MasterOrchestrator {
         this.spawnWorker(managed, i);
       }
     } catch (err) {
-      await this.rollbackApp(config.name, managed);
+      // The rollback is best-effort: its own failure must never mask the start
+      // error the caller is waiting on.
+      try {
+        await this.rollbackApp(config.name, managed);
+      } catch (rollbackError) {
+        console.error(`[master] failed to roll back start for "${config.name}":`, rollbackError);
+      }
       throw err;
     }
   }
 
   /** Tear down a partially-started app and remove it from the registry. */
   private async rollbackApp(name: string, managed: ManagedApp): Promise<void> {
-    this.stopWorkerMonitors(managed);
-    await this.workerHandler.stopAllWorkers(managed);
-    this.workerHandler.cleanupApp(managed);
-    this.stopProxy(name);
-    this.releaseAllWorkerPorts(managed);
-    await this.logManager.closeApp?.(name);
-    this.apps.delete(name);
+    try {
+      this.stopWorkerMonitors(managed);
+      await this.workerHandler.stopAllWorkers(managed);
+    } finally {
+      // `killWorker` throws when a child survives SIGKILL. Registry, ports and
+      // the proxy listener are global bookkeeping: they must be released even
+      // then, or the app name stays wedged and the failed start is not
+      // retryable for the life of the daemon (h68 applied the same rule to
+      // stop/restart/delete).
+      //
+      // Unregister FIRST. Every statement below can throw (`stopProxy` calls
+      // into the proxy, `closeApp` is injectable), and this is the one that
+      // decides whether the operator can retry at all — it must not sit behind
+      // anything that might not run.
+      this.apps.delete(name);
+      this.workerHandler.cleanupApp(managed);
+      managed.spawned.clear();
+      managed.launchTokens.clear();
+      managed.startedAt = null;
+      this.stopProxy(name);
+      this.releaseAllWorkerPorts(managed);
+      await this.logManager.closeApp?.(name);
+    }
   }
 
   // -----------------------------------------------------------------------

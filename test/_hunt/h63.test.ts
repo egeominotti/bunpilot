@@ -18,6 +18,7 @@
 import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { TCPSocketListener } from 'bun';
 import { validateApp } from '../../src/config/validator';
 import { SqliteStore } from '../../src/store/sqlite';
 
@@ -28,7 +29,7 @@ const BOOT_MODULE = join(REPO, 'src/daemon/boot.ts');
 // caps unix socket paths at ~104 bytes.
 const tmpHome = mkdtempSync('/private/tmp/h63-');
 const spawnedPids: number[] = [];
-let portHolder: ReturnType<typeof Bun.listen> | null = null;
+let portHolder: TCPSocketListener<undefined> | null = null;
 
 afterAll(() => {
   try {

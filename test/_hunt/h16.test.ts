@@ -29,6 +29,8 @@
 
 import { afterEach, expect, test } from 'bun:test';
 import type { AppConfig } from '../../src/config/types';
+import type { CrashRecovery } from '../../src/core/backoff';
+import type { WorkerLifecycle } from '../../src/core/lifecycle';
 import { MasterOrchestrator } from '../../src/core/master';
 import { pollUntil } from '../../src/core/poll';
 import type { SpawnedWorker } from '../../src/core/process-manager';
@@ -46,7 +48,11 @@ function makeConfig(name: string): AppConfig {
     shutdownSignal: 'SIGTERM',
     readyTimeout: 150,
     backoff: { initial: 60_000, multiplier: 2, max: 60_000 },
-    clustering: { enabled: false, strategy: 'proxy' },
+    clustering: {
+      enabled: false,
+      strategy: 'proxy',
+      rollingRestart: { batchSize: 1, batchDelay: 1_000 },
+    },
   };
 }
 
@@ -122,8 +128,8 @@ function makeHarness(gracefulExitMs: number): Harness {
   m.createProxyCluster = () => ({ start() {}, addWorker() {}, removeWorker() {}, stop() {} });
   m.workerHandler = new WorkerHandler(
     m.processManager as never,
-    (m as Record<string, never>).crashRecovery,
-    (m as Record<string, never>).lifecycle,
+    m.crashRecovery as CrashRecovery,
+    m.lifecycle as WorkerLifecycle,
   );
 
   return {

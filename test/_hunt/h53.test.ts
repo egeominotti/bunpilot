@@ -94,11 +94,17 @@ test('CFG-004 consequence: an ACCEPTED config must not make two workers share on
   }
   if (accepted === null) return;
 
+  // AppConfig.logs is optional, but validateApp always fills it in (validateLogs
+  // returns a complete LogsConfig). Fail loudly rather than fall back to a default
+  // that would drop the colliding outFile this test is exercising.
+  const acceptedLogs = accepted.logs;
+  if (!acceptedLogs) throw new Error('validateApp returned an app config without logs');
+
   const base = join(TMP_ROOT, 'logs');
   const manager = new LogManager(base);
   try {
-    const w0 = manager.createWriters(accepted.name, 0, accepted.logs);
-    const w1 = manager.createWriters(accepted.name, 1, accepted.logs);
+    const w0 = manager.createWriters(accepted.name, 0, acceptedLogs);
+    const w1 = manager.createWriters(accepted.name, 1, acceptedLogs);
 
     await w0.stdout.write('W0-STDOUT\n');
     await w1.stderr.write('W1-STDERR\n');

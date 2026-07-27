@@ -31,7 +31,9 @@ const REPO_ROOT = join(import.meta.dir, '..', '..');
 const TMP_BASE = '/private/tmp';
 
 const tmpRoot = mkdtempSync(join(TMP_BASE, 'bunpilot-h19-'));
-let child: ReturnType<typeof Bun.spawn> | null = null;
+// Mirrors the spawn options below (stdin defaults to 'ignore') so `child.stdout`
+// / `child.stderr` are typed as the ReadableStreams they actually are.
+let child: Bun.Subprocess<'ignore', 'pipe', 'pipe'> | null = null;
 
 afterAll(() => {
   try {

@@ -43,6 +43,11 @@ export const PORT_RELEASE_DELAY = 500;
 /** Env keys the master uses internally – never leaked to workers */
 export const INTERNAL_ENV_KEYS = new Set([
   'BUNPILOT_DAEMON',
+  // daemonize() hands the daemon its config path through the environment so
+  // `__daemon` stays the final argv token. Workers inherit the daemon's env, so
+  // without this a worker that shells out to `bunpilot daemon start` would
+  // silently adopt its supervisor's config.
+  'BUNPILOT_CONFIG',
   'BUNPILOT_CONTROL_SOCKET',
   'BUNPILOT_INTERNAL_PORT_BASE',
 ]);

@@ -107,18 +107,19 @@ function readProcessCommand(pid: number): string | null {
 }
 
 function isBunpilotCommand(command: string): boolean {
-  // The daemon is always spawned with the hidden `__daemon` sub-command, which
-  // daemonize() appends as the FINAL argv token regardless of the install path
-  // ([execPath, '__daemon'] or [execPath, 'run', entry, '__daemon']). That
-  // marker — not the install path — is the stable identity signal, so a renamed
-  // or vendored binary is still recognized (h20 / BUG CLASS P).
+  // The daemon is always spawned with the hidden `__daemon` sub-command
+  // ([execPath, '__daemon'] or [execPath, 'run', entry, '__daemon']), optionally
+  // followed by a single config path when started with `--config`. That marker —
+  // not the install path — is the stable identity signal, so a renamed or
+  // vendored binary is still recognized (h20 / BUG CLASS P).
   //
-  // Requiring it to be the trailing token of a multi-token command line (rather
-  // than merely present somewhere) avoids treating an unrelated PID-reused
-  // process that happens to carry a stray `__daemon` argument as the daemon and
-  // then killing it.
+  // The marker must be the last or second-to-last token (and never argv[0]): a
+  // config-started daemon carries the config path after it, while an unrelated
+  // PID-reused process with a stray `__daemon` argument buried mid-command line
+  // is still rejected rather than signalled.
   const tokens = command.replaceAll('\\', '/').trim().split(/\s+/);
-  return tokens.length >= 2 && tokens[tokens.length - 1].toLowerCase() === '__daemon';
+  const marker = tokens.findIndex((t) => t.toLowerCase() === '__daemon');
+  return marker >= 1 && marker >= tokens.length - 2;
 }
 
 /**

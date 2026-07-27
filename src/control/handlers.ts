@@ -21,7 +21,7 @@ export interface CommandContext {
   restartApp(name: string, force?: boolean): Promise<void>;
   reloadApp(name: string): Promise<void>;
   deleteApp(name: string): Promise<void>;
-  getMetrics(): unknown;
+  getMetrics(): AppStatus[];
   getLogs(name: string, lines?: number): string[];
   dumpState(): unknown;
   shutdown(): Promise<void>;
@@ -127,9 +127,16 @@ export function createCommandHandlers(ctx: CommandContext): Map<string, Handler>
   });
 
   // -- metrics ------------------------------------------------------------
-  handlers.set('metrics', async (_args) => {
+  handlers.set('metrics', async (args) => {
     const metrics = ctx.getMetrics();
-    return createResponse('', metrics);
+    const name = extractName(args);
+    // `bunpilot metrics <name>` sends a name; without this filter the CLI
+    // silently reported every app, and a typo exited 0 instead of erroring.
+    if (!name) return createResponse('', metrics);
+
+    const app = metrics.find((a) => a.name === name);
+    if (!app) return appNotFound('', name);
+    return createResponse('', [app]);
   });
 
   // -- logs ---------------------------------------------------------------

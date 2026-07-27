@@ -104,7 +104,11 @@ function makeConfig(name: string, port: number, backoffInitial: number): AppConf
     readyTimeout: 60_000,
     backoff: { initial: backoffInitial, multiplier: 1, max: backoffInitial },
     port,
-    clustering: { enabled: false },
+    clustering: {
+      enabled: false,
+      strategy: 'auto',
+      rollingRestart: { batchSize: 1, batchDelay: 0 },
+    },
   };
 }
 

@@ -24,6 +24,7 @@
     "test:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov",
     "test:watch": "bun test --watch",
     "typecheck": "bun run tsc --noEmit",
+    "typecheck:test": "bun run tsc --noEmit -p tsconfig.test.json",
     "version:check": "bun run scripts/check-version.ts",
     "check": "biome check .",
     "check:fix": "biome check --write .",
@@ -31,7 +32,7 @@
     "lint:fix": "biome lint --write .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "ci": "bun run check && bun run typecheck && bun run test",
+    "ci": "bun run check && bun run typecheck && bun run typecheck:test && bun run test",
     "simulate": "bun run scripts/simulate.ts",
     "simulate:cluster": "bun run scripts/simulate-cluster.ts",
     "prepare": "husky"

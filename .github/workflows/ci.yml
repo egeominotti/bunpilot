@@ -36,6 +36,7 @@ jobs:
         run: |
           bun run check
           bun run typecheck
+          bun run typecheck:test
           bun run version:check
       - name: Audit dependencies
         run: npm audit --audit-level=high

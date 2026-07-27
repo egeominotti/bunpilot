@@ -38,7 +38,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 describe('HealthChecker', () => {
   let checker: HealthChecker;
   /** Collect test servers so afterEach can clean them up. */
-  const servers: Server[] = [];
+  const servers: Server<unknown>[] = [];
 
   beforeEach(() => {
     checker = new HealthChecker();

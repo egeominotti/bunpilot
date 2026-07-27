@@ -27,6 +27,8 @@ export interface MetricsDataProvider {
 const CONTENT_TYPE_JSON = 'application/json; charset=utf-8';
 const CONTENT_TYPE_PROM = 'text/plain; version=0.0.4; charset=utf-8';
 const CONTENT_TYPE_TEXT = 'text/plain; charset=utf-8';
+/** Minimum gap between error-boundary log lines (see `MetricsHttpServer.start`). */
+const ERROR_LOG_INTERVAL = 10_000;
 
 // ---------------------------------------------------------------------------
 // MetricsHttpServer
@@ -36,6 +38,9 @@ export class MetricsHttpServer {
   private readonly port: number;
   private readonly provider: MetricsDataProvider;
   private server: HttpServer | null = null;
+  /** Total requests that hit the error boundary (see `start`). */
+  private errorCount = 0;
+  private lastErrorLogAt = 0;
 
   constructor(port: number, provider: MetricsDataProvider) {
     this.port = port;
@@ -51,7 +56,27 @@ export class MetricsHttpServer {
     this.server = Bun.serve({
       hostname: '127.0.0.1',
       port: this.port,
+      // Without an explicit boundary Bun renders its development error page —
+      // source excerpt and stack trace — on the unauthenticated metrics port,
+      // and dumps the same trace into the daemon log.
+      development: false,
       fetch: (req) => this.handleRequest(req),
+      error: (err) => {
+        // Log it — a boundary that neither logs nor counts turns a broken
+        // provider into an invisible failure — but throttled: this port is
+        // unauthenticated, so an input that reliably throws would otherwise be
+        // an unbounded daemon-log amplifier.
+        this.errorCount++;
+        const now = Date.now();
+        if (now - this.lastErrorLogAt >= ERROR_LOG_INTERVAL) {
+          console.error(`[metrics] request failed (${this.errorCount} total):`, err);
+          this.lastErrorLogAt = now;
+        }
+        return new Response('Internal Server Error', {
+          status: 500,
+          headers: { 'Content-Type': CONTENT_TYPE_TEXT },
+        });
+      },
     });
   }
 
@@ -74,7 +99,20 @@ export class MetricsHttpServer {
       return MetricsHttpServer.methodNotAllowed();
     }
 
-    const url = new URL(req.url);
+    // `req.url` is only absolute when the client sent a Host header: an HTTP/1.0
+    // request without one (legal) yields a bare path, and a malformed authority
+    // (`Host: h:99999999`) yields an unparseable URL. Resolve against a base so
+    // the former is a normal scrape, and reject the latter with a 400 rather
+    // than letting the TypeError escape.
+    let url: URL;
+    try {
+      url = new URL(req.url, 'http://127.0.0.1');
+    } catch {
+      return new Response('Bad Request: malformed request URL', {
+        status: 400,
+        headers: { 'Content-Type': CONTENT_TYPE_TEXT },
+      });
+    }
     const path = url.pathname;
 
     switch (true) {
