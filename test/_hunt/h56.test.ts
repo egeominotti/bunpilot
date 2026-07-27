@@ -9,15 +9,16 @@
 // handler needs `drainMs` (< killTimeout) must be allowed to finish draining.
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AppConfig } from '../../src/config/types';
 import { APP_DEFAULTS } from '../../src/constants';
 import { ProcessManager } from '../../src/core/process-manager';
+import { makeTempDir } from '../_helpers/tmp';
 
 const SDK_PATH = join(import.meta.dir, '..', '..', 'src', 'sdk', 'worker.ts');
 
-const dir = mkdtempSync(join('/private/tmp', 'h56-'));
+const dir = makeTempDir('h56-');
 const spawnedPids: number[] = [];
 
 afterAll(() => {

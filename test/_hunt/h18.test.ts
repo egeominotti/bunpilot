@@ -11,11 +11,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LogsConfig } from '../../src/config/types';
 import { LogManager } from '../../src/logs/manager';
+import { makeTempDir } from '../_helpers/tmp';
 
 // -- deterministic PRNG (mulberry32) ----------------------------------------
 function prng(seed: number): () => number {
@@ -60,7 +61,7 @@ test('pipeStream cancels the child stream when the log writer fails (no unbounde
   const lineLen = 40_000 + Math.floor(rand() * 20_000); // 40k..60k bytes/line
   const lines = Math.ceil(TOTAL_CHILD_BYTES / (lineLen + 1));
 
-  const root = mkdtempSync('/private/tmp/bunpilot-h18-');
+  const root = makeTempDir('bunpilot-h18-');
   cleanups.push(() => rm(root, { recursive: true, force: true }));
 
   const app = 'blk';

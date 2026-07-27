@@ -26,9 +26,9 @@
 import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { TMP_BASE } from '../_helpers/tmp';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
-const TMP_BASE = '/private/tmp';
 
 const tmpRoot = mkdtempSync(join(TMP_BASE, 'bunpilot-h19-'));
 // Mirrors the spawn options below (stdin defaults to 'ignore') so `child.stdout`

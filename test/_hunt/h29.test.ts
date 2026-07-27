@@ -11,11 +11,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ControlClient } from '../../src/control/client';
 import { createResponse } from '../../src/control/protocol';
 import { ControlServer } from '../../src/control/server';
+import { makeTempDir } from '../_helpers/tmp';
 
 const tempDirs: string[] = [];
 const servers: ControlServer[] = [];
@@ -38,7 +39,7 @@ afterAll(() => {
 });
 
 function makeSocketPath(): string {
-  const dir = mkdtempSync(join('/private/tmp', 'bp-h29-'));
+  const dir = makeTempDir('bp-h29-');
   tempDirs.push(dir);
   return join(dir, 'ctl.sock');
 }

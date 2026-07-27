@@ -9,17 +9,18 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ControlClient } from '../../src/control/client';
 import { createResponse, MAX_CONTROL_FRAME_BYTES } from '../../src/control/protocol';
 import { ControlServer } from '../../src/control/server';
+import { makeTempDir } from '../_helpers/tmp';
 
 const tmpDirs: string[] = [];
 const servers: ControlServer[] = [];
 
 function makeSocketPath(): string {
-  const dir = mkdtempSync('/private/tmp/bunpilot-h0-');
+  const dir = makeTempDir('bunpilot-h0-');
   tmpDirs.push(dir);
   return join(dir, 'control.sock');
 }

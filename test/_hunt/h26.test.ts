@@ -6,18 +6,11 @@
 // must never leave the child's stdout pipe undrained.
 
 import { expect, test } from 'bun:test';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LogManager } from '../../src/logs/manager';
 import { rotatedLogPath } from '../../src/logs/writer';
+import { makeTempDir } from '../_helpers/tmp';
 
 // Deterministic PRNG (mulberry32) so failures are reproducible from the seed.
 function prng(seed: number): () => number {
@@ -58,7 +51,7 @@ test('log pipe survives a transient write failure and keeps draining the stream'
 
   for (const seed of SEEDS) {
     const rand = prng(seed);
-    const root = mkdtempSync(join('/private/tmp', 'bp-h26-'));
+    const root = makeTempDir('bp-h26-');
     const manager = new LogManager(root);
 
     let outCtl!: ReadableStreamDefaultController<Uint8Array>;

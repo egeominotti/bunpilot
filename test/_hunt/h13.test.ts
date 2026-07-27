@@ -11,17 +11,17 @@
 // trailing suffix overlap — returns [] and drops it forever.
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { findNewLogLines } from '../../src/cli/commands/logs';
 import { readLogLines } from '../../src/logs/reader';
+import { makeTempDir } from '../_helpers/tmp';
 
 const roots: string[] = [];
 
 function makeRoot(): string {
-  const root = mkdtempSync(join('/private/tmp', 'bp-h13-'));
+  const root = makeTempDir('bp-h13-');
   roots.push(root);
   return root;
 }
@@ -34,8 +34,7 @@ afterAll(() => {
       // best effort
     }
   }
-  // never touch ~/.bunpilot; tmpdir() referenced only to keep the import honest
-  void tmpdir;
+  // never touch ~/.bunpilot — temp roots come from ../_helpers/tmp
 });
 
 // Deterministic PRNG (mulberry32) so failures are reproducible from the seed.

@@ -30,10 +30,10 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type MetricsDataProvider, MetricsHttpServer } from '../../src/metrics/http-server';
 import { SqliteStore } from '../../src/store/sqlite';
+import { TMP_BASE } from '../_helpers/tmp';
 
 const SQLITE_MODULE = join(import.meta.dir, '..', '..', 'src', 'store', 'sqlite.ts');
 
@@ -54,7 +54,6 @@ afterAll(() => {
 });
 
 // Short base path, with a portable fallback so this is not macOS-only.
-const TMP_BASE = existsSync('/private/tmp') ? '/private/tmp' : tmpdir();
 
 /** Unique temp dir, auto-removed. Short prefix: never touches ~/.bunpilot. */
 function tempDir(tag: string): string {

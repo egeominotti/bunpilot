@@ -18,12 +18,13 @@
 // ---------------------------------------------------------------------------
 
 import { expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readLogLines } from '../../src/logs/reader';
+import { makeTempDir } from '../_helpers/tmp';
 
 function makeRoot(): string {
-  return mkdtempSync(join('/private/tmp', 'h39-logs-'));
+  return makeTempDir('h39-logs-');
 }
 
 /** Deterministic mulberry32 PRNG so any failure reports a reproducible seed. */

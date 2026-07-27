@@ -15,12 +15,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import type { LogsConfig } from '../../src/config/types';
 import { LogManager } from '../../src/logs/manager';
+import { makeTempDir } from '../_helpers/tmp';
 
-const tempDir = mkdtempSync(join('/private/tmp', 'bunpilot-h50-'));
+const tempDir = makeTempDir('bunpilot-h50-');
 
 afterAll(() => {
   rmSync(tempDir, { recursive: true, force: true });

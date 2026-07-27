@@ -13,10 +13,11 @@
 
 import { Database } from 'bun:sqlite';
 import { afterAll, expect, test } from 'bun:test';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AppConfig } from '../../src/config/types';
 import { SqliteStore } from '../../src/store/sqlite';
+import { makeTempDir } from '../_helpers/tmp';
 
 // --- deterministic PRNG ----------------------------------------------------
 function mulberry32(seed: number): () => number {
@@ -48,7 +49,7 @@ function makeAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 
 const roots: string[] = [];
 function tempRoot(): string {
-  const d = mkdtempSync('/private/tmp/h31-');
+  const d = makeTempDir('h31-');
   roots.push(d);
   return d;
 }

@@ -15,8 +15,10 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pidsMatching } from '../_helpers/procs';
+import { makeTempDir } from '../_helpers/tmp';
 
 const REPO_ROOT = resolve(import.meta.dir, '../..');
 const ENTRY = resolve(REPO_ROOT, 'src/index.ts');
@@ -24,7 +26,7 @@ const ENTRY = resolve(REPO_ROOT, 'src/index.ts');
 // Deterministic-but-unique identifiers so pgrep can isolate this test's procs.
 const TOKEN = `h11w${process.pid.toString(36)}${Date.now().toString(36)}`;
 
-const root = mkdtempSync('/private/tmp/bp-h11-');
+const root = makeTempDir('bp-h11-');
 const scriptPath = resolve(root, `${TOKEN}.ts`);
 const cfgPath = resolve(root, 'cfg.json');
 const pidFile = resolve(root, 'bunpilot.pid');
@@ -37,12 +39,7 @@ function sleep(ms: number): Promise<void> {
 
 /** PIDs of live worker processes belonging to this test (matched on script path). */
 function workerPids(): number[] {
-  const out = Bun.spawnSync(['pgrep', '-f', TOKEN]);
-  return new TextDecoder()
-    .decode(out.stdout)
-    .split('\n')
-    .map((l) => Number(l.trim()))
-    .filter((n) => Number.isSafeInteger(n) && n > 0 && !spawnedDaemonPids.includes(n));
+  return pidsMatching(TOKEN).filter((n) => !spawnedDaemonPids.includes(n));
 }
 
 function isAlive(pid: number): boolean {

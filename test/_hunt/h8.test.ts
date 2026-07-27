@@ -1,9 +1,10 @@
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ControlClient } from '../../src/control/client';
 import { createResponse } from '../../src/control/protocol';
 import { ControlServer } from '../../src/control/server';
+import { makeTempDir } from '../_helpers/tmp';
 
 // ---------------------------------------------------------------------------
 // CTRL-06: every socket.write(payload) of a control frame must transmit the
@@ -17,7 +18,7 @@ import { ControlServer } from '../../src/control/server';
 // ---------------------------------------------------------------------------
 
 // Keep the socket path short: macOS caps sun_path at ~104 bytes.
-const dir = mkdtempSync(join('/private/tmp', 'bp-h8-'));
+const dir = makeTempDir('bp-h8-');
 const servers: ControlServer[] = [];
 
 afterAll(() => {

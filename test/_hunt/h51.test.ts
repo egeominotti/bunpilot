@@ -1,11 +1,11 @@
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateApp } from '../../src/config/validator';
 import { LogManager } from '../../src/logs/manager';
 import { readLogLines, rotationIndex } from '../../src/logs/reader';
 import { rotatedLogPath } from '../../src/logs/writer';
+import { makeTempDir, TMP_BASE } from '../_helpers/tmp';
 
 // LOG-1 (AGENTS.md: "Log rotation naming is `name.N.log`"): every custom log
 // filename that config validation ACCEPTS must produce files that
@@ -23,7 +23,7 @@ afterAll(() => {
 });
 
 function mkRoot(): string {
-  const root = mkdtempSync(join('/private/tmp', 'h51-'));
+  const root = makeTempDir('h51-');
   roots.push(root);
   return root;
 }
@@ -44,8 +44,8 @@ const STEMS = ['server', 'out', 'app-out', 'my.service', 'worker_1'];
 const EXTS = ['.log', '.txt', '', '.out', '.LOG', '.log.txt'];
 
 test('LOG-1: any accepted logs.outFile must stay readable and rotate as name.N.log', async () => {
-  // Sanity check on the temp dir used by mkdtemp: keep away from ~/.bunpilot.
-  expect(tmpdir().length).toBeGreaterThan(0);
+  // Temp roots come from ../_helpers/tmp (TMP_BASE), never ~/.bunpilot.
+  expect(TMP_BASE.length).toBeGreaterThan(0);
 
   const rand = prng(0xc0ffee);
   const failures: string[] = [];

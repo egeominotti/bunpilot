@@ -14,6 +14,7 @@ import {
   removePidFile,
   writePidFile,
 } from '../../src/daemon/pid';
+import { pidsMatching } from '../_helpers/procs';
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown
@@ -139,31 +140,48 @@ describe('isProcessRunning', () => {
 // ---------------------------------------------------------------------------
 
 describe('isBunpilotProcess', () => {
-  test('does not trust an unrelated process merely because an argument contains bunpilot', () => {
+  /**
+   * `Bun.spawn` returns as soon as the child is forked, but the command line
+   * only becomes the child's own argv after `exec`. Reading /proc/<pid>/cmdline
+   * inside that window yields the parent's argv (or nothing), which makes the
+   * positive assertion fail intermittently on Linux — and makes the NEGATIVE
+   * assertions pass for the wrong reason. Wait for the argv to actually land.
+   */
+  async function waitForArgv(pid: number, token: string): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      if (pidsMatching(token).includes(pid)) return;
+      await Bun.sleep(25);
+    }
+    throw new Error(`process ${pid} never exposed ${token} in its command line`);
+  }
+
+  test('does not trust an unrelated process merely because an argument contains bunpilot', async () => {
     const proc = Bun.spawn({
       cmd: ['bun', '-e', 'await Bun.sleep(60_000)', 'bunpilot-daemon-marker'],
       stdio: ['ignore', 'ignore', 'ignore'],
     });
     try {
+      await waitForArgv(proc.pid, 'bunpilot-daemon-marker');
       expect(isBunpilotProcess(proc.pid)).toBe(false);
     } finally {
       proc.kill();
     }
   });
 
-  test('recognizes a Bunpilot-marked process with the hidden daemon command', () => {
+  test('recognizes a Bunpilot-marked process with the hidden daemon command', async () => {
     const proc = Bun.spawn({
       cmd: ['bun', '-e', 'await Bun.sleep(60_000)', 'bunpilot-daemon-marker', '__daemon'],
       stdio: ['ignore', 'ignore', 'ignore'],
     });
     try {
+      await waitForArgv(proc.pid, '__daemon');
       expect(isBunpilotProcess(proc.pid)).toBe(true);
     } finally {
       proc.kill();
     }
   });
 
-  test('returns false for a non-bun process', () => {
+  test('returns false for a non-bun process', async () => {
     // Spawn a non-bun process (sleep)
     const proc = Bun.spawn({
       cmd: ['sleep', '60'],
@@ -172,6 +190,7 @@ describe('isBunpilotProcess', () => {
     const pid = proc.pid;
 
     try {
+      await waitForArgv(pid, 'sleep');
       expect(isBunpilotProcess(pid)).toBe(false);
     } finally {
       proc.kill();

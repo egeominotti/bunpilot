@@ -20,8 +20,9 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { makeTempDir } from '../_helpers/tmp';
 
 const WORKER_SRC = join(import.meta.dir, '..', '..', 'src', 'sdk', 'worker.ts');
 
@@ -37,7 +38,7 @@ function makeRng(seed: number): () => number {
   };
 }
 
-const tmpRoot = mkdtempSync(join('/private/tmp', 'bp-h12-'));
+const tmpRoot = makeTempDir('bp-h12-');
 afterAll(() => {
   try {
     rmSync(tmpRoot, { recursive: true, force: true });
@@ -166,6 +167,7 @@ test('worker with a throwing shutdown handler exits 0 on SIGTERM', async () => {
     fixture,
     `import { bunpilotOnShutdown } from ${JSON.stringify(WORKER_SRC)};
 import { writeFileSync } from 'node:fs';
+import { makeTempDir } from '../_helpers/tmp';
 
 bunpilotOnShutdown(() => {
   throw new Error('boom');

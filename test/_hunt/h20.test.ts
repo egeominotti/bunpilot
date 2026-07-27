@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stopDaemon } from '../../src/daemon/daemonize';
 import {
@@ -23,8 +23,9 @@ import {
   readPidFile,
   writePidFile,
 } from '../../src/daemon/pid';
+import { makeTempDir } from '../_helpers/tmp';
 
-const ROOT = mkdtempSync(join('/private/tmp', 'h20-'));
+const ROOT = makeTempDir('h20-');
 const spawned: Bun.Subprocess[] = [];
 
 afterAll(() => {
