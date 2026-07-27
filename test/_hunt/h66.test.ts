@@ -17,10 +17,11 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateConfig } from '../../src/config/validator';
 import { DEFAULT_METRICS } from '../../src/constants';
+import { makeTempDir } from '../_helpers/tmp';
 
 const SRC_ROOT = join(import.meta.dir, '..', '..', 'src');
 
@@ -51,7 +52,7 @@ function freePort(): number {
 // ---------------------------------------------------------------------------
 
 test('daemon does not bind the metrics port when every app disables metrics', async () => {
-  const tmp = mkdtempSync('/private/tmp/bunpilot-h66-');
+  const tmp = makeTempDir('bunpilot-h66-');
   cleanups.push(() => rmSync(tmp, { recursive: true, force: true }));
 
   const home = join(tmp, 'home');

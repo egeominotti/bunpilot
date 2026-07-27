@@ -40,8 +40,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AppConfig, AppStatus, WorkerInfo } from '../../src/config/types';
 import {
@@ -49,6 +48,7 @@ import {
   createCommandHandlers,
   type Handler,
 } from '../../src/control/handlers';
+import { TMP_BASE } from '../_helpers/tmp';
 
 // ---------------------------------------------------------------------------
 // Part A — metrics handler filtering (in-process, stubbed CommandContext)
@@ -160,7 +160,6 @@ test('an empty fleet answers with nothing instead of a stale payload', async () 
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 // Short base path (unix socket length cap) with a portable fallback.
-const TMP_BASE = existsSync('/private/tmp') ? '/private/tmp' : tmpdir();
 const tmpRoot = mkdtempSync(join(TMP_BASE, 'bunpilot-h74-'));
 // Piped stdio: `Bun.Subprocess` (as h71 uses it) types stdout/stderr as the
 // readable streams this harness drains.

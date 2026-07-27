@@ -13,15 +13,17 @@
 
 import { Database } from 'bun:sqlite';
 import { afterAll, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { ControlClient } from '../../src/control/client';
+import { killMatching } from '../_helpers/procs';
+import { makeTempDir } from '../_helpers/tmp';
 
 const SEED = 0x4_0_40;
 
 const repo = join(import.meta.dir, '../..');
-const tmp = mkdtempSync('/private/tmp/bunpilot-h40-');
+const tmp = makeTempDir('bunpilot-h40-');
 const home = join(tmp, 'home');
 mkdirSync(home, { recursive: true });
 
@@ -54,7 +56,7 @@ afterAll(async () => {
     }
   }
   // Backstop: nothing spawned from this temp dir may survive the test.
-  Bun.spawnSync(['pkill', '-9', '-f', tmp]);
+  killMatching(tmp);
   rmSync(tmp, { recursive: true, force: true });
 });
 

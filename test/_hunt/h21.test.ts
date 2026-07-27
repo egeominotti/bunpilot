@@ -1,9 +1,10 @@
 import { test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { validateApp } from '../../src/config/validator';
 import { LogManager } from '../../src/logs/manager';
+import { makeTempDir } from '../_helpers/tmp';
 
 // Deterministic PRNG (mulberry32) so a failure is reproducible from its seed.
 function prng(seed: number): () => number {
@@ -39,7 +40,7 @@ function genCandidate(rnd: () => number): string {
  * the directory's execute bit and permanently breaks every writer for that app.
  */
 test('CFG-008: validated logs.outFile never resolves to the app log directory itself', () => {
-  const base = mkdtempSync(join('/private/tmp', 'h21-cfg-'));
+  const base = makeTempDir('h21-cfg-');
   const appDir = join(base, 'svc');
   const appDirAbs = resolve(appDir);
 
@@ -86,7 +87,7 @@ test('CFG-008: validated logs.outFile never resolves to the app log directory it
  * the app log directory's permissions.
  */
 test('CFG-008: accepted logs config never strips the app log dir execute bit', async () => {
-  const base = mkdtempSync(join('/private/tmp', 'h21-mgr-'));
+  const base = makeTempDir('h21-mgr-');
   const appDir = join(base, 'svc');
 
   try {

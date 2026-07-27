@@ -1,9 +1,10 @@
 import { afterAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateApp } from '../../src/config/validator';
 import { LogManager } from '../../src/logs/manager';
 import { rotatedLogPath } from '../../src/logs/writer';
+import { makeTempDir } from '../_helpers/tmp';
 
 // ---------------------------------------------------------------------------
 // CFG-006: a configured log path must never equal a *rotated* form
@@ -35,7 +36,7 @@ function mulberry32(seed: number): () => number {
 const pick = <T>(rng: () => number, xs: readonly T[]): T => xs[Math.floor(rng() * xs.length)] as T;
 
 test('CFG-006: accepted log configs never let one stream rotate over the other', async () => {
-  const root = mkdtempSync('/private/tmp/h42-');
+  const root = makeTempDir('h42-');
   roots.push(root);
 
   const MARKER = 'IMPORTANT-PEER-STREAM-DATA';

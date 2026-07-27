@@ -230,7 +230,7 @@ await checkAsync('spawn and kill a worker', async () => {
 
   // Try hitting the HTTP server
   try {
-    const res = await fetch('http://localhost:18900/');
+    const res = await fetch('http://127.0.0.1:18900/');
     const json = await res.json();
     assert(json.pid === worker.pid, `Expected PID ${worker.pid} in response`);
     ok('HTTP server responds with worker info');
@@ -240,7 +240,7 @@ await checkAsync('spawn and kill a worker', async () => {
 
   // Health endpoint
   try {
-    const res = await fetch('http://localhost:18900/health');
+    const res = await fetch('http://127.0.0.1:18900/health');
     assert(res.status === 200, `Expected 200, got ${res.status}`);
     ok('Health endpoint returns 200');
   } catch (e) {

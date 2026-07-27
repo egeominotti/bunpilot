@@ -1,15 +1,16 @@
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateApp } from '../../src/config/validator';
 import { LogManager } from '../../src/logs/manager';
+import { makeTempDir } from '../_helpers/tmp';
 
 // CFG-004: for every app, the resolved stdout/stderr paths must be distinct
 // across all (workerId, stream) pairs -- including pairs where one side is a
 // custom filename and the other uses the default
 // `${appName}-${workerId}-out.log` / `-err.log` scheme.
 
-const TMP_ROOT = mkdtempSync(join('/private/tmp', 'bunpilot-h53-'));
+const TMP_ROOT = makeTempDir('bunpilot-h53-');
 
 afterAll(() => {
   rmSync(TMP_ROOT, { recursive: true, force: true });

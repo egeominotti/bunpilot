@@ -19,15 +19,16 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ControlClient } from '../../src/control/client';
+import { makeTempDir } from '../_helpers/tmp';
 
 const REPO = join(import.meta.dir, '..', '..');
 const FIXTURE = join(REPO, 'fixtures', 'bunqueue-server.ts');
 const BOOT = join(REPO, 'src', 'daemon', 'boot.ts');
 
-const HOME = mkdtempSync('/private/tmp/bunqueue-e2e-');
+const HOME = makeTempDir('bunqueue-e2e-');
 const SOCKET = join(HOME, 's.sock');
 const CONFIG_PATH = join(HOME, 'bunpilot.config.ts');
 const METRICS_PORT = 21_000 + Math.floor(Math.random() * 15_000);

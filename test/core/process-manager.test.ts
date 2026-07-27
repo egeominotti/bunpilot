@@ -784,7 +784,7 @@ describe('ProcessManager', () => {
   // -------------------------------------------------------------------------
 
   describe('default clustering policy', () => {
-    test('multi-instance app without clustering config uses the default proxy policy', async () => {
+    test('multi-instance app without clustering config uses the platform default policy', async () => {
       const script = writeWorkerScript(
         'env-port-nocluster.ts',
         `
@@ -814,8 +814,20 @@ describe('ProcessManager', () => {
       expect(msg).toHaveProperty('type', 'custom');
       if (msg.type === 'custom') {
         const data = msg.data as Record<string, string>;
-        expect(data.port).toBe(String(40001));
-        expect(data.reusePort).toBe('0');
+        // `strategy: 'auto'` is platform-dependent by design (src/cluster/
+        // platform.ts): Linux distributes across listeners with SO_REUSEPORT,
+        // so every worker binds the PUBLIC port; macOS has the socket option
+        // but does not load-balance with it, so workers get per-worker internal
+        // ports behind the userland proxy. Branch on the platform directly
+        // rather than on detectStrategy(), so this pins the intended matrix
+        // instead of restating the implementation.
+        if (process.platform === 'linux') {
+          expect(data.port).toBe('3000');
+          expect(data.reusePort).toBe('1');
+        } else {
+          expect(data.port).toBe(String(40001));
+          expect(data.reusePort).toBe('0');
+        }
       }
     });
 

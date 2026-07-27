@@ -8,16 +8,17 @@
 // `activePipes` — so EVERY later close pays the full 5 s drain again.
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LogsConfig } from '../../src/config/types';
 import { LogManager } from '../../src/logs/manager';
+import { makeTempDir } from '../_helpers/tmp';
 
 const DRAIN_MS = 5_000;
 const LOGS: LogsConfig = { maxSize: 10 * 1024 * 1024, maxFiles: 3 };
 
-const tmpRoot = mkdtempSync(join('/private/tmp', 'h62-'));
+const tmpRoot = makeTempDir('h62-');
 const stray: number[] = [];
 
 afterAll(() => {

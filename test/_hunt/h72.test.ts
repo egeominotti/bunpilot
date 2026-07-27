@@ -29,12 +29,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { findNewLogLines, logsCommand } from '../../src/cli/commands/logs';
 import { encodeMessage, NdjsonFramer } from '../../src/control/protocol';
 import { readLogLines } from '../../src/logs/reader';
+import { TMP_BASE } from '../_helpers/tmp';
 
 // Mirrors the private constants in src/cli/commands/logs.ts.
 const DEFAULT_LINES = 50;
@@ -51,7 +51,6 @@ const roots: string[] = [];
 
 // Short base path keeps unix socket paths under the macOS length cap; falls
 // back to the platform temp dir so this is not macOS-only.
-const TMP_BASE = existsSync('/private/tmp') ? '/private/tmp' : tmpdir();
 
 function makeRoot(): string {
   // Short prefix: the stub daemon socket lives under here and unix socket paths

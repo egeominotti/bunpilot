@@ -41,7 +41,6 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { daemonCommand } from '../../src/cli/commands/daemon';
 import { parseArgs } from '../../src/cli/index';
@@ -52,6 +51,8 @@ import {
   readPidFile,
   writePidFile,
 } from '../../src/daemon/pid';
+import { pidsMatching } from '../_helpers/procs';
+import { TMP_BASE } from '../_helpers/tmp';
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -59,7 +60,6 @@ import {
 
 // Short base path (like h20) keeps the spawned command lines well under any
 // `ps` width limit, so the assertions below observe the FULL argv.
-const TMP_BASE = existsSync('/private/tmp') ? '/private/tmp' : tmpdir();
 const ROOT = mkdtempSync(join(TMP_BASE, 'h71-'));
 const spawned: Bun.Subprocess[] = [];
 
@@ -587,20 +587,8 @@ async function runCli(args: string[], home: string, patch: EnvPatch = {}): Promi
   return { exitCode, output: `${stdout}${stderr}`.trim() };
 }
 
-/** PIDs of live processes whose command line carries `token`. */
-function pidsMatching(token: string): number[] {
-  let stdout: Uint8Array;
-  try {
-    stdout = Bun.spawnSync(['pgrep', '-f', token]).stdout;
-  } catch {
-    return []; // no pgrep on this box – the PID-file path still reaps the daemon
-  }
-  return new TextDecoder()
-    .decode(stdout)
-    .split('\n')
-    .map((line) => Number(line.trim()))
-    .filter((pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid);
-}
+// PID lookup lives in ../_helpers/procs: it reads /proc directly on Linux, so
+// it needs no procps and cannot silently miscount in a minimal container.
 
 /** PIDs already signalled, so the afterAll backstop cannot hit a reused PID. */
 const killedPids = new Set<number>();

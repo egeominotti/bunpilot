@@ -3,10 +3,11 @@
 // logging for the app (even the default-named stderr file).
 
 import { expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateLogs } from '../../src/config/validate-helpers';
 import { LogManager } from '../../src/logs/manager';
+import { makeTempDir } from '../_helpers/tmp';
 
 // --- seeded deterministic PRNG (mulberry32) --------------------------------
 function makeRng(seed: number): () => number {
@@ -58,7 +59,7 @@ test('validateLogs rejects outFile/errFile that resolve to the app log dir itsel
 });
 
 test('createWriters never turns the app log directory into the log file', async () => {
-  const base = mkdtempSync(join('/private/tmp', 'h33-logs-'));
+  const base = makeTempDir('h33-logs-');
   const appDir = join(base, 'svc');
   try {
     const mgr = new LogManager(base);

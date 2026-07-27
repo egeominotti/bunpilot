@@ -68,6 +68,7 @@ Use Biome only. Do not reintroduce ESLint, Prettier, their configs, or their dep
 - A hard restart kills and awaits the old process before binding its replacement; rolling reload keeps old capacity until a replacement is online.
 - Public and internal ports are globally collision-free for the daemon and are released on stop, delete, rollback, and retirement.
 - Control responses are correlated by request ID. Frames and proxy pre-connect buffers remain bounded, and malformed input must fail closed.
+- The proxy strategy balances per TCP **connection**, not per HTTP request: a worker is chosen once, in `handleConnection`. A keep-alive client is therefore pinned to one worker for the life of its connection, so a few long-lived clients can skew load. This is normal L4 behaviour and applies wherever `strategy: 'auto'` resolves to `proxy` — i.e. every non-Linux platform. Any test or simulation that measures round-robin fairness must open a fresh connection per request; `fetch` pools connections and a `Connection: close` request header does not change that.
 - Config, IPC, PID files, app names, and log filenames are untrusted input. Reject traversal, NULs, invalid numbers, and unsafe process IDs.
 - Persistence reflects successful lifecycle transitions. Failed starts/restarts remain retryable and must not leave stale locks or desired state.
 - Log rotation naming is `name.N.log`; readers return bounded tails and never escape the per-app directory.

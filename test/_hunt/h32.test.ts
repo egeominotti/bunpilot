@@ -17,10 +17,11 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ControlClient } from '../../src/control/client';
 import { SqliteStore } from '../../src/store/sqlite';
+import { makeTempDir } from '../_helpers/tmp';
 
 // -- deterministic PRNG (mulberry32) ----------------------------------------
 const SEED = 0x5f3a_11c7;
@@ -41,7 +42,7 @@ const APP = 'h32api';
 
 // -- private sandbox ---------------------------------------------------------
 // Short base path: unix socket paths are limited to ~104 bytes on macOS.
-const HOME = mkdtempSync('/private/tmp/bph32-');
+const HOME = makeTempDir('bph32-');
 const SOCKET = `${HOME}/s.sock`;
 const CONFIG_PATH = `${HOME}/bunpilot.config.ts`;
 const GOOD_SCRIPT = `${HOME}/good.ts`;

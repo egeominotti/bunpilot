@@ -1,9 +1,10 @@
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateApp } from '../../src/config/validator';
 import { LogWriter, rotatedLogPath } from '../../src/logs/writer';
+import { makeTempDir } from '../_helpers/tmp';
 
 // CFG-006: no configured (or worker-suffixed) log path may equal any rotated
 // form `name.N.log` (N in 1..maxFiles) of another configured log path, because
@@ -11,7 +12,7 @@ import { LogWriter, rotatedLogPath } from '../../src/logs/writer';
 
 const tempDirs: string[] = [];
 function makeDir(): string {
-  const dir = mkdtempSync(join('/private/tmp', 'h64-'));
+  const dir = makeTempDir('h64-');
   tempDirs.push(dir);
   return dir;
 }

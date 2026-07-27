@@ -34,6 +34,92 @@ function fail(label: string, err: unknown): void {
   console.log(`  ${RED}FAIL${RESET} ${label}: ${err instanceof Error ? err.message : String(err)}`);
 }
 
+/**
+ * Issue one HTTP GET over its OWN TCP connection and return the body.
+ *
+ * `fetch` cannot be used to measure round-robin fairness: it keeps a client
+ * connection pool, and a `Connection: close` REQUEST header only asks the
+ * upstream to hang up — the client↔proxy socket can survive and carry the next
+ * request to the worker it is already bound to. On Linux, resolving `localhost`
+ * made that reuse dominant, so every request after a worker removal landed on
+ * one worker and the fairness check failed even though the proxy was correct.
+ *
+ * Since what these checks actually assert is "each NEW connection goes to the
+ * next worker", open the connection explicitly.
+ */
+async function getOnce(port: number, path = '/', timeoutMs = 10_000): Promise<string> {
+  return await new Promise<string>((resolveBody, rejectBody) => {
+    const chunks: Uint8Array[] = [];
+    let settled = false;
+    let socketRef: { end: () => void } | null = null;
+
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+
+    // A response that never closes would otherwise hang this script until the
+    // CI job's own timeout, with no hint about which request stalled.
+    const timer = setTimeout(() => {
+      finish(() => {
+        try {
+          socketRef?.end();
+        } catch {
+          /* already gone */
+        }
+        rejectBody(new Error(`timed out after ${timeoutMs}ms waiting for ${path} on ${port}`));
+      });
+    }, timeoutMs);
+
+    Bun.connect({
+      hostname: '127.0.0.1',
+      port,
+      socket: {
+        open(socket) {
+          socketRef = socket;
+          socket.write(`GET ${path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+        },
+        data(_socket, chunk) {
+          // Buffer bytes and decode once: a multi-byte sequence can straddle
+          // two TCP segments.
+          chunks.push(new Uint8Array(chunk));
+        },
+        close() {
+          finish(() => {
+            const total = chunks.reduce((n, c) => n + c.length, 0);
+            const bytes = new Uint8Array(total);
+            let offset = 0;
+            for (const c of chunks) {
+              bytes.set(c, offset);
+              offset += c.length;
+            }
+            const raw = new TextDecoder().decode(bytes);
+            const separator = raw.indexOf('\r\n\r\n');
+            if (separator === -1) {
+              rejectBody(new Error(`malformed response from port ${port}: ${raw.slice(0, 120)}`));
+              return;
+            }
+            const status = Number.parseInt(raw.slice(0, separator).split(' ')[1] ?? '', 10);
+            const body = raw.slice(separator + 4);
+            if (status !== 200) {
+              // Surface the status instead of letting the caller's JSON.parse
+              // report an opaque SyntaxError.
+              rejectBody(new Error(`HTTP ${status} from port ${port}: ${body.slice(0, 120)}`));
+              return;
+            }
+            resolveBody(body);
+          });
+        },
+        error(_socket, err) {
+          finish(() => rejectBody(err));
+        },
+      },
+    }).catch((err) => finish(() => rejectBody(err)));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -111,7 +197,7 @@ console.log(`\n${BOLD}--- Verifying internal ports ---${RESET}`);
 
 for (const w of workers) {
   try {
-    const res = await fetch(`http://localhost:${w.port}/`);
+    const res = await fetch(`http://127.0.0.1:${w.port}/`);
     const json = (await res.json()) as { pid: number; worker: string };
     w.actualPid = json.pid;
     ok(`Worker ${w.workerId} responds on port ${w.port} (PID ${json.pid})`);
@@ -158,12 +244,8 @@ const pidCounts = new Map<number, number>();
 
 for (let i = 0; i < REQUEST_COUNT; i++) {
   try {
-    // Force a new TCP connection per request so round-robin distributes properly.
-    // Without this, HTTP keep-alive reuses the same connection (same worker).
-    const res = await fetch(`http://localhost:${PUBLIC_PORT}/`, {
-      headers: { Connection: 'close' },
-    });
-    const json = (await res.json()) as { pid: number; worker: string };
+    // One fresh TCP connection per request — see getOnce().
+    const json = JSON.parse(await getOnce(PUBLIC_PORT)) as { pid: number; worker: string };
     const pid = json.pid;
     pidCounts.set(pid, (pidCounts.get(pid) ?? 0) + 1);
   } catch (e) {
@@ -218,7 +300,7 @@ if (fairnessOk) {
 console.log(`\n${BOLD}--- Health check through proxy ---${RESET}`);
 
 try {
-  const res = await fetch(`http://localhost:${PUBLIC_PORT}/health`, {
+  const res = await fetch(`http://127.0.0.1:${PUBLIC_PORT}/health`, {
     headers: { Connection: 'close' },
   });
   if (res.status === 200) {
@@ -242,10 +324,7 @@ proxy.removeWorker(0);
 const pidsAfterRemove = new Set<number>();
 for (let i = 0; i < WORKER_COUNT * 2; i++) {
   try {
-    const res = await fetch(`http://localhost:${PUBLIC_PORT}/`, {
-      headers: { Connection: 'close' },
-    });
-    const json = (await res.json()) as { pid: number };
+    const json = JSON.parse(await getOnce(PUBLIC_PORT)) as { pid: number };
     pidsAfterRemove.add(json.pid);
   } catch (e) {
     fail(`Request after removal ${i}`, e);
@@ -262,9 +341,12 @@ if (!pidsAfterRemove.has(removedPid)) {
 if (pidsAfterRemove.size === WORKER_COUNT - 1) {
   ok(`Remaining ${WORKER_COUNT - 1} workers still receive traffic`);
 } else {
+  const expectedPids = workers.slice(1).map((w) => w.actualPid ?? w.spawnPid);
   fail(
     'Remaining workers',
-    `Expected ${WORKER_COUNT - 1} active workers, got ${pidsAfterRemove.size}`,
+    `Expected ${WORKER_COUNT - 1} active workers, got ${pidsAfterRemove.size}. ` +
+      `Expected PIDs ${JSON.stringify(expectedPids)}, saw ${JSON.stringify([...pidsAfterRemove])} ` +
+      `across ${WORKER_COUNT * 2} requests`,
   );
 }
 

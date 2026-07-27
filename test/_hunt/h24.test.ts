@@ -17,12 +17,14 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
+import { join } from 'node:path';
 import type { AppConfig, AppStatus } from '../../src/config/types';
 import { validateApp } from '../../src/config/validator';
 import { toAppStatus } from '../../src/core/app-status';
 import type { ManagedApp } from '../../src/core/worker-handler';
 import { type MetricsDataProvider, MetricsHttpServer } from '../../src/metrics/http-server';
 import { formatPrometheus } from '../../src/metrics/prometheus';
+import { TMP_BASE } from '../_helpers/tmp';
 
 // -- seeded deterministic PRNG (mulberry32) ---------------------------------
 
@@ -123,7 +125,9 @@ test('metrics HTTP server never exposes AppConfig.env secrets (unauthenticated l
       configs.push(
         validateApp({
           name,
-          script: `/private/tmp/h24-${name}.ts`,
+          // Never opened — validateApp only needs an absolute path — but keep
+          // it platform-correct rather than macOS-shaped.
+          script: join(TMP_BASE, `h24-${name}.ts`),
           env,
         }),
       );

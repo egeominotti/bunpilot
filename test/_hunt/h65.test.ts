@@ -1,16 +1,9 @@
 import { afterAll, expect, test } from 'bun:test';
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateLogs } from '../../src/config/validate-helpers';
 import { LogManager } from '../../src/logs/manager';
+import { makeTempDir } from '../_helpers/tmp';
 
 // ---------------------------------------------------------------------------
 // Invariant under test (CFG-008):
@@ -22,7 +15,7 @@ import { LogManager } from '../../src/logs/manager';
 //   unreadable) and every subsequent write throws EISDIR.
 // ---------------------------------------------------------------------------
 
-const BASE = mkdtempSync('/private/tmp/h65-');
+const BASE = makeTempDir('h65-');
 
 afterAll(() => {
   // Damaged dirs may be mode 0600 (no traverse) — restore before rm -rf.

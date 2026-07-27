@@ -19,9 +19,10 @@
 import { Database } from 'bun:sqlite';
 import { afterAll, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ControlClient } from '../../src/control/client';
+import { makeTempDir } from '../_helpers/tmp';
 
 // ---------------------------------------------------------------------------
 // Deterministic PRNG (seeded) – drives the operation sequence
@@ -44,7 +45,7 @@ function mulberry32(seed: number): () => number {
 // Fixture
 // ---------------------------------------------------------------------------
 
-const tmp = mkdtempSync('/private/tmp/bunpilot-h2-');
+const tmp = makeTempDir('bunpilot-h2-');
 const repo = join(import.meta.dir, '..', '..');
 const socketPath = join(tmp, 'bunpilot.sock');
 const dbPath = join(tmp, 'bunpilot.db');

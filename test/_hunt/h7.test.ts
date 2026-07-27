@@ -10,13 +10,14 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ControlResponse } from '../../src/config/types';
 import { ControlClient } from '../../src/control/client';
 import { createResponse, encodeMessage, NdjsonFramer } from '../../src/control/protocol';
 import { ControlServer } from '../../src/control/server';
+import { makeTempDir } from '../_helpers/tmp';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -27,7 +28,7 @@ const servers: ControlServer[] = [];
 const openSockets: { end(): void }[] = [];
 
 function freshDir(): string {
-  const dir = mkdtempSync(join('/private/tmp', 'bunpilot-h7-'));
+  const dir = makeTempDir('bunpilot-h7-');
   roots.push(dir);
   return dir;
 }

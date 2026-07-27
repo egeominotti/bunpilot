@@ -16,18 +16,19 @@
 // ---------------------------------------------------------------------------
 
 import { afterAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TCPSocketListener } from 'bun';
 import { validateApp } from '../../src/config/validator';
 import { SqliteStore } from '../../src/store/sqlite';
+import { makeTempDir } from '../_helpers/tmp';
 
 const REPO = new URL('../../', import.meta.url).pathname;
 const BOOT_MODULE = join(REPO, 'src/daemon/boot.ts');
 
 // Short base path: the control socket lives under BUNPILOT_HOME and macOS
 // caps unix socket paths at ~104 bytes.
-const tmpHome = mkdtempSync('/private/tmp/h63-');
+const tmpHome = makeTempDir('h63-');
 const spawnedPids: number[] = [];
 let portHolder: TCPSocketListener<undefined> | null = null;
 
