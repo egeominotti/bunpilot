@@ -18,6 +18,7 @@
 
 import { Database } from 'bun:sqlite';
 import { afterAll, expect, test } from 'bun:test';
+import { execSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ControlClient } from '../../src/control/client';
@@ -53,14 +54,46 @@ const metricsPort = 20000 + Math.floor(Math.random() * 20000);
 
 let proc: ReturnType<typeof Bun.spawn> | null = null;
 
-afterAll(() => {
+afterAll(async () => {
+  // SIGKILL alone orphans the daemon's WORKERS: they are reparented to init and
+  // keep running on the machine after the suite exits. Ask for a graceful stop
+  // first so the daemon takes its children down with it, and only then force.
+  if (proc) {
+    try {
+      proc.kill('SIGTERM');
+      await Promise.race([proc.exited, Bun.sleep(5_000)]);
+    } catch {
+      /* already gone */
+    }
+    try {
+      proc.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+    await Promise.race([proc.exited, Bun.sleep(2_000)]);
+  }
+  // Backstop: kill anything still running this fixture's script, so a daemon
+  // that died before its own shutdown ran cannot leave workers behind.
   try {
-    proc?.kill('SIGKILL');
+    for (const line of execSync(`ps -axo pid=,command=`, { encoding: 'utf-8' }).split('\n')) {
+      if (!line.includes(scriptPath)) continue;
+      const pid = Number.parseInt(line.trim().split(/\s+/)[0] ?? '', 10);
+      if (!Number.isInteger(pid) || pid === process.pid) continue;
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
   } catch {
-    /* ignore */
+    /* ps unavailable — nothing more we can do */
   }
   rmSync(tmp, { recursive: true, force: true });
-});
+  // Explicit hook timeout: the default is 5s, which is LESS than this hook's
+  // own SIGTERM+SIGKILL budget — so in the very case the escalation exists for
+  // (a daemon that ignores SIGTERM) the hook would be aborted before the kill
+  // and the backstop ever ran, and the workers would leak anyway.
+}, 20_000);
 
 const APP = {
   name: 'dup',

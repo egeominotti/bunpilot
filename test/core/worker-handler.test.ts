@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { AppConfig, WorkerInfo, WorkerMessage } from '../../src/config/types';
+import type { AppConfig, WorkerInfo, WorkerMessage, WorkerState } from '../../src/config/types';
 import { CrashRecovery } from '../../src/core/backoff';
 import { WorkerLifecycle } from '../../src/core/lifecycle';
 import type { ProcessManager } from '../../src/core/process-manager';
@@ -370,7 +370,10 @@ describe('WorkerHandler', () => {
       // Reset state to online, then crash again
       worker.state = 'online';
       handler.handleExit(managed, 1, 1, null, onRestart);
-      expect(worker.state).toBe('crashed');
+      // Explicit type argument: after the assignment above, control-flow
+      // analysis has `worker.state` narrowed to 'online' and cannot see that
+      // handleExit mutated it — which is the whole point of this assertion.
+      expect<WorkerState>(worker.state).toBe('crashed');
 
       // Wait enough time for both timers to have fired
       await new Promise((resolve) => setTimeout(resolve, 400));

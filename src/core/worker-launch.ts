@@ -121,7 +121,14 @@ export async function restartWorker(
     // to still be a tracked member (retire splices it out, restart replaces the
     // array: h16/h17/h23/h57/h59).
     if (managed.stopping || managed.startedAt === null || !managed.workers.includes(worker)) {
-      managed.spawned.delete(worker.id);
+      // restartApp reuses worker ids (it clears `workers`/`spawned` and respawns
+      // 0..n-1 on the same ManagedApp), so by now a NEWER generation may own this
+      // id. Dropping it blindly would orphan a live process: `stopAllWorkers`
+      // only kills what is in `spawned`, so the replacement would survive every
+      // stop/delete/shutdown and wedge its port. Only drop the handle we own.
+      if (oldSpawned !== undefined && managed.spawned.get(worker.id) === oldSpawned) {
+        managed.spawned.delete(worker.id);
+      }
       return;
     }
 
@@ -141,7 +148,55 @@ export async function restartWorker(
     worker.exitCode = null;
     worker.signalCode = null;
 
-    launchWorker(deps, managed, worker);
+    // `launchWorker` can throw at two very different points, and the difference
+    // matters. `spawnWorker` is a bare `Bun.spawn` that throws synchronously on
+    // ENOENT (missing script/interpreter/cwd) and on EAGAIN/EMFILE — nothing is
+    // live. But the wiring AFTER the spawn (log writers -> mkdirSync/open) can
+    // also throw with the child already running, and dropping its handle there
+    // would orphan a live process that no stop/delete/shutdown can reach.
+    // Either way the worker must not be left stranded in 'starting' with no
+    // process, no timers and no retry path while the app reports 'running'.
+    try {
+      launchWorker(deps, managed, worker);
+    } catch (error) {
+      // Drop the token FIRST. The partial launch may already have queued a
+      // `ready` message, and with a live token that message would promote a
+      // child we are about to SIGKILL to 'online' — adding its doomed pid to
+      // the proxy pool and arming health checks on it. It also keeps the kill
+      // below from re-entering handleExit via the spawn's own exit callback.
+      managed.launchTokens.delete(worker.id);
+      // Monitors are armed just before the log wiring, so a wiring failure
+      // leaves a live heartbeat interval behind. Nothing else stops it if
+      // crashRecovery gives up.
+      deps.healthChecker.stopChecking(worker.id, managed.config.name);
+      deps.healthChecker.stopHeartbeatMonitor(worker.id, managed.config.name);
+      const partial = managed.spawned.get(worker.id);
+      if (partial) {
+        try {
+          await deps.processManager.killWorker(
+            partial.pid,
+            managed.config.shutdownSignal,
+            managed.config.killTimeout,
+          );
+          managed.spawned.delete(worker.id);
+        } catch (killError) {
+          // Unkillable child: keep the handle registered so stopAllWorkers can
+          // try again rather than losing the pid entirely.
+          console.error(
+            `[master] failed to kill partially-launched worker ${worker.id}:`,
+            killError,
+          );
+        }
+      } else {
+        managed.spawned.delete(worker.id);
+      }
+      // Hand the worker to the crash machinery so backoff / maxRestarts owns
+      // the retry.
+      deps.workerHandler.handleExit(managed, worker.id, null, null, (m, w) =>
+        scheduleRestart(deps, m, w),
+      );
+      throw error;
+    }
   });
 }
 

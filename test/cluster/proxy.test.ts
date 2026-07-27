@@ -48,7 +48,7 @@ function initWorkerSlots(proxy: ProxyCluster, count: number): void {
   }
   p.rrIndex = 0;
   // Rebuild the sorted worker ID cache (mirrors ProxyCluster.start())
-  p.sortedWorkerIds = Array.from(p.workers.keys()).sort((a: number, b: number) => a - b);
+  p.sortedWorkerIds = Array.from<number>(p.workers.keys()).sort((a, b) => a - b);
 }
 
 // ---------------------------------------------------------------------------

@@ -38,8 +38,11 @@ afterAll(() => {
 /** Grab a free high port by binding :0 and immediately releasing it. */
 function freePort(): number {
   const probe = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('x') });
+  // `Server.port` is optional in the types (unix-socket servers have none);
+  // a TCP listener on :0 always reports the kernel-assigned port.
   const port = probe.port;
   probe.stop(true);
+  if (port === undefined) throw new Error('Bun.serve did not report a listening port');
   return port;
 }
 

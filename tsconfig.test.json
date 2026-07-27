@@ -1,0 +1,14 @@
+{
+  // Type-checks the test suite, which the main tsconfig deliberately excludes
+  // (it is the build config: `rootDir: src`, `declaration: true`). Without this
+  // gate ~9k lines of tests are invisible to `tsc`, so a type-level regression
+  // in a src signature only shows up as a runtime failure — or not at all.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "dist", "fixtures"]
+}

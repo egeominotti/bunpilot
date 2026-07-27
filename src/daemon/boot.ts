@@ -34,6 +34,11 @@ import { isBunpilotWorkerProcess, removePidFile, writePidFile } from './pid';
 // Main
 // ---------------------------------------------------------------------------
 
+/** How often the persisted worker-pid set is refreshed from live state. */
+const WORKER_SYNC_INTERVAL = 10_000;
+/** Minimum gap between worker-sync failure log lines. */
+const SYNC_ERROR_LOG_INTERVAL = 60_000;
+
 /**
  * Reject listener collisions for apps submitted after the daemon has started.
  * The public-port conflict only applies when the daemon actually bound the
@@ -83,11 +88,13 @@ export async function bootDaemon(configPath?: string): Promise<void> {
   // and the open store (h52 / BUG CLASS F).
   let controlServer: ControlServer | null = null;
   let metricsServer: MetricsHttpServer | null = null;
+  let workerSyncTimer: ReturnType<typeof setInterval> | null = null;
   let cleanedUp = false;
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
     for (const [label, action] of [
+      ['worker sync timer', () => workerSyncTimer && clearInterval(workerSyncTimer)],
       ['metrics server', () => metricsServer?.stop()],
       ['control server', () => controlServer?.stop()],
       ['store', () => store.close()],
@@ -163,18 +170,39 @@ export async function bootDaemon(configPath?: string): Promise<void> {
         await master.startApp(config);
         store.saveApp(name, config);
         store.updateAppStatus(name, 'running');
+        persistWorkers(store, master, name);
         pendingConfigs.delete(name);
       },
 
       stopApp: async (name) => {
+        // Ordering is load-bearing: `master.stopApp` rejects when a child
+        // survives SIGKILL, so a stop that could not actually kill its workers
+        // never reaches clearWorkers and their pids stay on record for the next
+        // boot's reconciliation.
         await master.stopApp(name);
         store.updateAppStatus(name, 'stopped');
+        store.clearWorkers(name);
       },
       restartApp: async (name, force) => {
-        await master.restartApp(name, force);
-        store.updateAppStatus(name, 'running');
+        try {
+          await master.restartApp(name, force);
+          store.updateAppStatus(name, 'running');
+        } finally {
+          // Persist in a finally: a restart that threw part-way has still
+          // replaced some pids, and leaving the old ones on record would send
+          // the next boot after SIGKILL hunting processes that no longer exist.
+          persistBestEffort(store, master, name);
+        }
       },
-      reloadApp: (name) => master.reloadApp(name),
+      reloadApp: async (name) => {
+        try {
+          await master.reloadApp(name);
+        } finally {
+          // A reload replaces every worker with a new pid; the persisted set
+          // must follow or boot-time orphan reconciliation chases dead pids.
+          persistBestEffort(store, master, name);
+        }
+      },
       deleteApp: async (name) => {
         await master.deleteApp(name);
         store.deleteApp(name);
@@ -289,6 +317,28 @@ export async function bootDaemon(configPath?: string): Promise<void> {
       }
     }
 
+    // Keep the persisted worker set in sync with pids that change outside any
+    // control command (crash-restart, heartbeat restart, ready-timeout respawn).
+    const lastSyncedWorkers = new Map<string, string>();
+    let syncFailures = 0;
+    let lastSyncLogAt = 0;
+    workerSyncTimer = setInterval(() => {
+      try {
+        refreshPersistedWorkers(store, master, lastSyncedWorkers);
+      } catch (error) {
+        // Throttled: a permanently broken store (disk full, corrupt db) would
+        // otherwise write a stack trace into the daemon log every tick, for as
+        // long as the daemon lives.
+        syncFailures++;
+        const now = Date.now();
+        if (now - lastSyncLogAt >= SYNC_ERROR_LOG_INTERVAL) {
+          console.error(`[daemon] worker pid sync failed (${syncFailures} total):`, error);
+          lastSyncLogAt = now;
+        }
+      }
+    }, WORKER_SYNC_INTERVAL);
+    workerSyncTimer.unref?.();
+
     writePidFile(pidFile, process.pid);
     console.log(`[daemon] ready (pid=${process.pid})`);
   } catch (error) {
@@ -328,8 +378,74 @@ function reconcileOrphanedWorkers(store: SqliteStore, appName: string, script: s
 function persistWorkers(store: SqliteStore, master: MasterOrchestrator, appName: string): void {
   const status = master.getAppStatus(appName);
   if (!status) return;
-  for (const worker of status.workers) {
-    store.saveWorker(appName, worker.id, worker.state, worker.pid || undefined);
+  store.replaceWorkers(
+    appName,
+    status.workers.map((worker) => ({
+      id: worker.id,
+      state: worker.state,
+      pid: worker.pid || undefined,
+    })),
+  );
+}
+
+/**
+ * `persistWorkers` for use inside a `finally`.
+ *
+ * A throw out of a `finally` REPLACES the in-flight exception, so a SQLITE_BUSY
+ * / SQLITE_FULL here would both hide the real restart failure and turn a
+ * SUCCESSFUL restart into a reported failure. Persistence is bookkeeping: it
+ * must never decide the outcome of the command it is recording.
+ */
+function persistBestEffort(store: SqliteStore, master: MasterOrchestrator, appName: string): void {
+  try {
+    persistWorkers(store, master, appName);
+  } catch (error) {
+    console.error(`[daemon] failed to persist workers for "${appName}":`, error);
+  }
+}
+
+/**
+ * Re-persist every app's live worker PIDs.
+ *
+ * Lifecycle commands persist at their own boundaries, but a crash-restart, a
+ * heartbeat-triggered restart or a ready-timeout respawn happens with no
+ * command in flight and silently changes a worker's pid. Left unrefreshed, the
+ * `workers` table goes stale and the next boot after a SIGKILLed daemon fails
+ * to identify (and therefore fails to kill) the real orphans.
+ */
+function refreshPersistedWorkers(
+  store: SqliteStore,
+  master: MasterOrchestrator,
+  lastSynced: Map<string, string>,
+): void {
+  const seen = new Set<string>();
+  for (const app of master.listApps()) {
+    // Only running apps. A stopped app keeps its (dead) worker entries in
+    // memory, so refreshing it would silently undo the clearWorkers() that
+    // `stop` just performed and hand the next boot a set of dead pids.
+    if (app.status !== 'running') continue;
+    // Never persist an empty worker set for a running app: it would erase the
+    // pids of a generation that may still be alive, which is exactly what
+    // boot-time reconciliation needs to find. `restartApp` does clear the array
+    // before respawning, but with no await in between, so a timer callback
+    // cannot currently sample that window — this is insurance against a future
+    // await landing there, not a live hazard.
+    if (app.workers.length === 0) continue;
+    // Dirty check: an idle daemon must not run a DELETE + N INSERT transaction
+    // every tick forever just to rewrite identical rows.
+    const signature = app.workers.map((w) => `${w.id}:${w.state}:${w.pid ?? ''}`).join(',');
+    seen.add(app.name);
+    if (lastSynced.get(app.name) === signature) continue;
+    persistWorkers(store, master, app.name);
+    lastSynced.set(app.name, signature);
+  }
+  // Bounded memory: without this the map keeps one entry per app name for the
+  // daemon's whole life, across arbitrary create/delete churn. Correctness does
+  // not depend on it — every transition into 'running' persists at its own
+  // boundary (startApp / restartApp / reloadApp), so a stale entry could only
+  // ever skip a write the store already has.
+  for (const name of lastSynced.keys()) {
+    if (!seen.has(name)) lastSynced.delete(name);
   }
 }
 

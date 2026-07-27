@@ -49,8 +49,20 @@ export class SqliteStore {
   constructor(dbPath: string = DB_PATH) {
     if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
     this.db = new Database(dbPath, { create: true });
-    if (dbPath !== ':memory:') chmodSync(dbPath, 0o600);
-    this.init();
+    // A throw after the handle is open (chmod EPERM, or init() hitting
+    // SQLITE_NOTADB on a corrupt file) would otherwise leak the open database
+    // handle: the constructor never returns, so no caller can ever close() it.
+    try {
+      if (dbPath !== ':memory:') chmodSync(dbPath, 0o600);
+      this.init();
+    } catch (error) {
+      try {
+        this.db.close();
+      } catch {
+        // Already closed / never fully opened.
+      }
+      throw error;
+    }
   }
 
   /** Prepare (or reuse) a cached Statement so it can be finalized on close(). */
@@ -222,6 +234,28 @@ export class SqliteStore {
   /** Drop every persisted worker row for an app (used when reconciling on boot). */
   clearWorkers(appName: string): void {
     this.stmt('DELETE FROM workers WHERE app_name = ?1').run(appName);
+  }
+
+  /**
+   * Replace an app's persisted worker set atomically.
+   *
+   * Boot-time orphan reconciliation reads these rows to kill a previous
+   * generation, so the table must mirror the live worker set exactly: a plain
+   * upsert would strand rows for workers that no longer exist (scale-down,
+   * reload with fresh ids), and a non-transactional delete-then-insert could be
+   * SIGKILLed mid-way and lose every PID it was meant to record.
+   */
+  replaceWorkers(
+    appName: string,
+    workers: readonly { id: number; state: string; pid?: number | null }[],
+  ): void {
+    const tx = this.db.transaction(() => {
+      this.stmt('DELETE FROM workers WHERE app_name = ?1').run(appName);
+      for (const worker of workers) {
+        this.saveWorker(appName, worker.id, worker.state, worker.pid ?? undefined);
+      }
+    });
+    tx();
   }
 
   // -------------------------------------------------------------------------

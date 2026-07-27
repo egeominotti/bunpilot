@@ -167,7 +167,7 @@ check('exponential backoff', () => {
   assert(r1 === 'restart', 'First crash should return restart');
 
   const state = cr.getState(0);
-  assert(state !== null, 'Crash state should exist');
+  assert(state !== undefined, 'Crash state should exist');
   assert(state.consecutiveCrashes === 1, `Expected 1 crash, got ${state.consecutiveCrashes}`);
 });
 

@@ -52,9 +52,9 @@ function baseConfig(script: string, killTimeout: number): AppConfig {
     script,
     instances: 1,
     killTimeout,
-    backoff: { type: 'exponential', initialDelay: 100, maxDelay: 1_000, factor: 2 },
+    backoff: { initial: 100, multiplier: 2, max: 1_000 },
     cwd: dir,
-  } as AppConfig;
+  };
 }
 
 test('SDK graceful drain is bounded by the configured killTimeout, not a hard-coded 5s', async () => {

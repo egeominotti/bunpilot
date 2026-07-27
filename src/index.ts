@@ -175,7 +175,10 @@ async function main(): Promise<void> {
 
       case '__daemon': {
         const { bootDaemon } = await import('./daemon/boot');
-        await bootDaemon(args[0]);
+        // daemonize() passes the config through the environment so `__daemon`
+        // stays the last argv token; argv is still honoured for a hand-rolled
+        // invocation.
+        await bootDaemon(args[0] ?? process.env.BUNPILOT_CONFIG);
         break;
       }
 

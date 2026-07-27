@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { beforeEach, describe, expect, test } from 'bun:test';
+import type { AppStatus } from '../../src/config/types';
 import {
   type CommandContext,
   createCommandHandlers,
@@ -22,7 +23,7 @@ function createMockContext(overrides: Partial<CommandContext> = {}): CommandCont
     restartApp: async () => {},
     reloadApp: async () => {},
     deleteApp: async () => {},
-    getMetrics: () => ({}),
+    getMetrics: () => [],
     getLogs: () => [],
     dumpState: () => ({}),
     shutdown: async () => {},
@@ -406,18 +407,28 @@ describe('handler: delete', () => {
 // ---------------------------------------------------------------------------
 
 describe('handler: metrics', () => {
+  const fakeMetrics: AppStatus[] = [
+    {
+      name: 'web',
+      status: 'running' as const,
+      workers: [],
+      config: {} as any,
+      startedAt: Date.now(),
+    },
+    { name: 'api', status: 'stopped' as const, workers: [], config: {} as any, startedAt: null },
+  ];
+
   test('returns ok with empty metrics', async () => {
-    const ctx = createMockContext({ getMetrics: () => ({}) });
+    const ctx = createMockContext({ getMetrics: () => [] });
     const handlers = createCommandHandlers(ctx);
     const handler = handlers.get('metrics')!;
 
     const res = await handler({});
     expect(res.ok).toBe(true);
-    expect(res.data).toEqual({});
+    expect(res.data).toEqual([]);
   });
 
-  test('returns ok with populated metrics', async () => {
-    const fakeMetrics = { web: { cpu: 12.5, memory: 1024 } };
+  test('returns the whole fleet verbatim when no name is given', async () => {
     const ctx = createMockContext({ getMetrics: () => fakeMetrics });
     const handlers = createCommandHandlers(ctx);
     const handler = handlers.get('metrics')!;
@@ -425,6 +436,30 @@ describe('handler: metrics', () => {
     const res = await handler({});
     expect(res.ok).toBe(true);
     expect(res.data).toEqual(fakeMetrics);
+  });
+
+  test('returns exactly the named app when a name is given', async () => {
+    const ctx = createMockContext({ getMetrics: () => fakeMetrics });
+    const handlers = createCommandHandlers(ctx);
+    const handler = handlers.get('metrics')!;
+
+    // 'api' is the SECOND entry, so a handler that ignored the name (or always
+    // answered with the head of the fleet) would fail here.
+    const res = await handler({ name: 'api' });
+    expect(res.ok).toBe(true);
+    expect(res.data).toEqual([fakeMetrics[1]]);
+    expect((res.data as AppStatus[]).length).toBe(1);
+  });
+
+  test('returns an error for a name that is not in the fleet', async () => {
+    const ctx = createMockContext({ getMetrics: () => fakeMetrics });
+    const handlers = createCommandHandlers(ctx);
+    const handler = handlers.get('metrics')!;
+
+    const res = await handler({ name: 'ghost' });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('App not found: ghost');
+    expect(res.data).toBeUndefined();
   });
 });
 

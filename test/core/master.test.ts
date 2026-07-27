@@ -1479,7 +1479,11 @@ describe('MasterOrchestrator', () => {
         name: 'no-proxy-app',
         port: 3000,
         instances: 2,
-        clustering: { enabled: false, strategy: 'auto' },
+        clustering: {
+          enabled: false,
+          strategy: 'auto',
+          rollingRestart: { batchSize: 1, batchDelay: 0 },
+        },
       });
       await master.startApp(config);
 
@@ -1674,7 +1678,11 @@ describe('MasterOrchestrator', () => {
         name: 'no-proxy-events',
         port: 3000,
         instances: 2,
-        clustering: { enabled: false, strategy: 'auto' },
+        clustering: {
+          enabled: false,
+          strategy: 'auto',
+          rollingRestart: { batchSize: 1, batchDelay: 0 },
+        },
       });
       await master.startApp(config);
 

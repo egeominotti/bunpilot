@@ -211,7 +211,10 @@ describe('setupSignalHandlers', () => {
     // Wait for the .finally() microtask (process.exit) to fire while still mocked
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(receivedSignal).toBe('SIGTERM');
+    // Explicit type argument: control-flow analysis still has `receivedSignal`
+    // narrowed to `null` (it is only ever assigned inside the callback), which
+    // is exactly what this assertion exists to disprove.
+    expect<string | null>(receivedSignal).toBe('SIGTERM');
 
     process.exit = originalExit;
   });
@@ -267,7 +270,8 @@ describe('setupSignalHandlers', () => {
     // Wait for the .finally() microtask to fire while still mocked
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(receivedSignal).toBe('SIGINT');
+    // See the SIGTERM case: narrowed to `null` until the callback runs.
+    expect<string | null>(receivedSignal).toBe('SIGINT');
 
     process.exit = originalExit;
   });

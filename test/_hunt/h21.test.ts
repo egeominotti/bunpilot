@@ -98,10 +98,16 @@ test('CFG-008: accepted logs config never strips the app log dir execute bit', a
         continue; // properly rejected
       }
 
+      // AppConfig.logs is optional, but validateApp always fills it in (validateLogs
+      // returns a complete LogsConfig). Fail loudly rather than fall back to a
+      // default that would drop the outFile this test is exercising.
+      const logs = app.logs;
+      if (!logs) throw new Error('validateApp returned an app config without logs');
+
       const mgr = new LogManager(base);
       let writers: { stdout: unknown; stderr: unknown } | undefined;
       try {
-        writers = mgr.createWriters('svc', 0, app.logs);
+        writers = mgr.createWriters('svc', 0, logs);
       } catch {
         // A throw here is an acceptable (loud) outcome; the silent corruption is not.
       }

@@ -14,7 +14,7 @@ import type { Server } from 'bun';
 import { ProxyCluster } from '../../src/cluster/proxy';
 import { INTERNAL_PORT_BASE } from '../../src/constants';
 
-const servers: Server[] = [];
+const servers: Server<unknown>[] = [];
 const proxies: ProxyCluster[] = [];
 
 /** Start a backend on the internal port for `workerId` returning `body`. */

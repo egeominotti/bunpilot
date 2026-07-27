@@ -47,10 +47,14 @@
 import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Subprocess } from 'bun';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 const tmpRoot = mkdtempSync(join('/private/tmp', 'bunpilot-h67-'));
-let child: ReturnType<typeof Bun.spawn> | null = null;
+// Spawned below with stdout/stderr piped; naming the generics keeps
+// `child.stdout` / `child.stderr` typed as ReadableStream instead of the
+// union `Bun.spawn`'s default overload resolves to.
+let child: Subprocess<'ignore', 'pipe', 'pipe'> | null = null;
 
 afterAll(() => {
   try {

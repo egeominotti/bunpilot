@@ -27,7 +27,24 @@ export async function daemonize(configPath?: string): Promise<void> {
   const cmd = runningFromSource
     ? [process.execPath, 'run', sourceEntrypoint, '__daemon']
     : [process.execPath, '__daemon'];
-  if (configPath) cmd.push(configPath);
+  // The config path travels in the environment, never in argv: `__daemon` must
+  // stay the final token so isBunpilotProcess() can identify this daemon from
+  // its command line. A path containing a space is indistinguishable from two
+  // argv tokens once `ps` joins them, which would make the daemon unstoppable.
+  //
+  // An INHERITED BUNPILOT_CONFIG must be cleared when this start has no config:
+  // the parent resolves pidFile/socketFile from its own `configPath` and then
+  // waits for the child to publish that exact pidFile. A child that silently
+  // adopts an ambient config writes a DIFFERENT pidFile, so the parent times
+  // out, SIGKILLs a daemon that had already spawned workers (orphaning them)
+  // and leaves the other config's pidFile behind pointing at a dead process.
+  const childEnv: Record<string, string | undefined> = {
+    ...process.env,
+    BUNPILOT_DAEMON: '1',
+  };
+  if (configPath) childEnv.BUNPILOT_CONFIG = configPath;
+  else delete childEnv.BUNPILOT_CONFIG;
+
   mkdirSync(dirname(paths.logFile), { recursive: true, mode: 0o700 });
   const logDescriptor = openSync(paths.logFile, 'a', 0o600);
   chmodSync(paths.logFile, 0o600);
@@ -38,10 +55,7 @@ export async function daemonize(configPath?: string): Promise<void> {
       stdio: ['ignore', logDescriptor, logDescriptor],
       detached: true,
       windowsHide: true,
-      env: {
-        ...process.env,
-        BUNPILOT_DAEMON: '1',
-      },
+      env: childEnv,
     });
   } finally {
     closeSync(logDescriptor);
