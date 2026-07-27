@@ -23,6 +23,7 @@ import {
   readPidFile,
   writePidFile,
 } from '../../src/daemon/pid';
+import { pidsMatching } from '../_helpers/procs';
 import { makeTempDir } from '../_helpers/tmp';
 
 const ROOT = makeTempDir('h20-');
@@ -78,8 +79,20 @@ function spawnDaemonLike(binaryPath: string): Bun.Subprocess {
   return proc;
 }
 
-async function waitVisible(pid: number): Promise<void> {
-  for (let i = 0; i < 40 && !isProcessRunning(pid); i += 1) await Bun.sleep(25);
+/**
+ * Wait until the process is not just alive but has actually EXEC'd.
+ *
+ * `Bun.spawn` returns after fork, and `isProcessRunning` is true from that
+ * instant — but the command line only becomes the child's own argv after exec.
+ * Reading it inside that window yields the parent's (the bun test runner's),
+ * so `isBunpilotProcess` sees no `__daemon` marker and reports false. Liveness
+ * alone is not enough; wait for the argv this test is actually asserting on.
+ */
+async function waitVisible(pid: number, argvMarker: string): Promise<void> {
+  for (let i = 0; i < 200; i += 1) {
+    if (isProcessRunning(pid) && pidsMatching(argvMarker).includes(pid)) return;
+    await Bun.sleep(25);
+  }
 }
 
 test('DMN-09: isBunpilotProcess recognizes daemons spawned from any install path', async () => {
@@ -103,7 +116,7 @@ test('DMN-09: isBunpilotProcess recognizes daemons spawned from any install path
   for (const testCase of cases) {
     buildBinary(testCase.binary);
     const proc = spawnDaemonLike(testCase.binary);
-    await waitVisible(proc.pid);
+    await waitVisible(proc.pid, testCase.binary);
 
     expect(isProcessRunning(proc.pid)).toBe(true);
     const identified = isBunpilotProcess(proc.pid);
@@ -123,7 +136,9 @@ test('stopDaemon must never delete the PID file while the daemon is still alive'
   const binary = join(ROOT, 'pmtool-stop');
   buildBinary(binary);
   const proc = spawnDaemonLike(binary);
-  await waitVisible(proc.pid);
+  // stopDaemon() calls isBunpilotProcess internally, so this case needs the
+  // post-exec argv just as much as DMN-09 does.
+  await waitVisible(proc.pid, binary);
 
   const pidFile = join(ROOT, 'state', 'daemon.pid');
   writePidFile(pidFile, proc.pid);
