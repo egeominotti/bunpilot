@@ -83,7 +83,6 @@ function makeConfig(readyTimeout: number): AppConfig {
 }
 
 function stub(master: MasterOrchestrator, ctx: Ctx): void {
-  // biome-ignore lint/suspicious/noExplicitAny: reaching into private fields
   const m = master as any;
 
   m.processManager = {
@@ -91,7 +90,6 @@ function stub(master: MasterOrchestrator, ctx: Ctx): void {
       const pid = ctx.nextPid++;
       ctx.spawnCalls.push({ workerId, pid });
       return {
-        // biome-ignore lint/suspicious/noExplicitAny: test double
         proc: {} as any,
         pid,
         stdout: new ReadableStream({
@@ -140,7 +138,6 @@ function stub(master: MasterOrchestrator, ctx: Ctx): void {
     ) {
       ctx.staleCallbacks.set(workerId, onStale);
       // Pass a no-op onStale to the real checker: we drive the tick ourselves.
-      // biome-ignore lint/suspicious/noExplicitAny: forwarding a widened API
       (ctx.real.startHeartbeatMonitor as any)(workerId, () => {}, namespace, ...rest);
     },
     stopHeartbeatMonitor(wid: number, ns?: string) {
@@ -173,7 +170,6 @@ function tickHeartbeatMonitor(ctx: Ctx, workerId: number, namespace: string): bo
 }
 
 function cleanup(master: MasterOrchestrator, ctx: Ctx): void {
-  // biome-ignore lint/suspicious/noExplicitAny: reaching into private fields
   const m = master as any;
   for (const managed of m.apps.values()) {
     m.workerHandler.cleanupApp(managed);
@@ -218,7 +214,6 @@ test('a worker still inside its readyTimeout is not restarted by heartbeat stale
       const config = makeConfig(readyTimeout);
       await master.startApp(config);
 
-      // biome-ignore lint/suspicious/noExplicitAny: reaching into private fields
       const managed = (master as any).apps.get(config.name);
       const worker = managed.workers[0];
 

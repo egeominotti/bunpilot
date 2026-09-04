@@ -68,7 +68,6 @@ function emptyStream(): ReadableStream {
 }
 
 function stubMaster(master: MasterOrchestrator, ctx: Ctx): void {
-  // biome-ignore lint/suspicious/noExplicitAny: private field injection
   const m = master as any;
 
   m.processManager = {
@@ -146,9 +145,7 @@ function makeConfig(name: string, instances: number): AppConfig {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: private field access
 function managedOf(master: MasterOrchestrator, name: string): any {
-  // biome-ignore lint/suspicious/noExplicitAny: private field access
   return (master as any).apps.get(name);
 }
 
@@ -216,7 +213,6 @@ afterEach(async () => {
   if (!active) return;
   const master = active;
   active = null;
-  // biome-ignore lint/suspicious/noExplicitAny: private field access
   const m = master as any;
   for (const managed of m.apps.values()) {
     m.workerHandler.cleanupApp(managed);
@@ -291,7 +287,6 @@ test('per-worker Prometheus label cardinality stays bounded across reloads/resta
       }
     }
 
-    // biome-ignore lint/suspicious/noExplicitAny: private field access
     const m = master as any;
     for (const managed of m.apps.values()) m.workerHandler.cleanupApp(managed);
     await master.shutdown('SIGTERM');

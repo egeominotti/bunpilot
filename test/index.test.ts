@@ -47,7 +47,7 @@ async function runCLI(
  * Strip ANSI escape codes so assertions work against plain text.
  */
 function stripAnsi(str: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI SGR sequences begin with ESC.
+  // oxlint-disable-next-line no-control-regex -- ANSI SGR sequences begin with ESC.
   return str.replace(/\x1b\[[0-9;]*m/g, '');
 }
 

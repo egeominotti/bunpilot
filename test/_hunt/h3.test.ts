@@ -45,7 +45,6 @@ function makeConfig(name: string, port: number): AppConfig {
 }
 
 function stub(master: MasterOrchestrator, ctx: Ctx): void {
-  // biome-ignore lint/suspicious/noExplicitAny: private field injection
   const m = master as any;
 
   m.processManager = {
@@ -57,7 +56,6 @@ function stub(master: MasterOrchestrator, ctx: Ctx): void {
     ): SpawnedWorker {
       ctx.spawnCalls.push(workerId);
       return {
-        // biome-ignore lint/suspicious/noExplicitAny: stub subprocess
         proc: {} as any,
         pid: ctx.nextPid++,
         stdout: new ReadableStream({
@@ -131,7 +129,6 @@ test('INV-STOPPING-01: stopApp is not undone by an in-flight restartWorker', asy
     stub(master, ctx);
 
     const name = `h3-app-${seed}`;
-    // biome-ignore lint/suspicious/noExplicitAny: private field access
     const apps = (master as any).apps as Map<string, { spawned: Map<number, unknown> }>;
 
     try {

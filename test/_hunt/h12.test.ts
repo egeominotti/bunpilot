@@ -66,7 +66,7 @@ test('a throwing shutdown handler never starves the other handlers or process.ex
 
     const handlerCount = 2 + Math.floor(rng() * 4); // 2..5 handlers
     const throwerIndex = Math.floor(rng() * handlerCount);
-    const runs = new Array<number>(handlerCount).fill(0);
+    const runs = Array.from({ length: handlerCount }, () => 0);
 
     // Snapshot listeners so we can uninstall this iteration's SDK listeners.
     const msgBefore = new Set(process.listeners('message'));

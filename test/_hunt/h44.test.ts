@@ -41,7 +41,7 @@ const SLOT_COUNT = 4;
 // Per-iteration mutable state. The SDK offers no way to unregister handlers,
 // so we register SLOT_COUNT stable delegating handlers exactly once and swap
 // their behavior between iterations.
-let behaviors: Behavior[] = new Array(SLOT_COUNT).fill('ok');
+let behaviors: Behavior[] = Array.from({ length: SLOT_COUNT }, () => 'ok');
 let calls: number[] = [];
 let exitCalls: number[] = [];
 

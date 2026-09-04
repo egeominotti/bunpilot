@@ -70,6 +70,10 @@ const MAX_HEAP_OBJECT_TYPES = 64;
 function isValidHeap(heap: unknown): boolean {
   if (!isPlainObject(heap)) return false;
   if (!allNonNegative(heap, HEAP_KEYS)) return false;
+  if (heap.censusAvailable !== undefined && typeof heap.censusAvailable !== 'boolean') return false;
+  if (heap.v8StatisticsAvailable !== undefined && typeof heap.v8StatisticsAvailable !== 'boolean') {
+    return false;
+  }
   const { topObjectTypes } = heap;
   if (!Array.isArray(topObjectTypes) || topObjectTypes.length > MAX_HEAP_OBJECT_TYPES) return false;
   for (const entry of topObjectTypes) {

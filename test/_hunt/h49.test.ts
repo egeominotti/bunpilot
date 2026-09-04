@@ -64,7 +64,6 @@ async function makeFixture(name: string, interval: number, threshold: number): P
   const server = Bun.serve({ port: 0, fetch: () => new Response('ok') });
 
   const master = new MasterOrchestrator();
-  // biome-ignore lint/suspicious/noExplicitAny: white-box access to private wiring
   const m = master as any;
 
   m.processManager = {
@@ -78,7 +77,6 @@ async function makeFixture(name: string, interval: number, threshold: number): P
       msgCbs.set(wid, onMessage);
       exitCbs.set(wid, onExit);
       return {
-        // biome-ignore lint/suspicious/noExplicitAny: stub subprocess
         proc: {} as any,
         pid: 90_000 + spawnCalls.length,
         stdout: new ReadableStream({ start: (c) => c.close() }),
@@ -130,7 +128,6 @@ async function makeFixture(name: string, interval: number, threshold: number): P
     exitCbs,
     server,
     workers: () =>
-      // biome-ignore lint/suspicious/noExplicitAny: white-box read of managed state
       m.apps.get(name)?.workers.map((w: any) => ({
         id: w.id,
         state: w.state,

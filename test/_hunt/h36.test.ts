@@ -40,7 +40,6 @@ interface Ctx {
 }
 
 function stubMaster(master: MasterOrchestrator, ctx: Ctx): void {
-  // biome-ignore lint/suspicious/noExplicitAny: test reaches into private fields
   const m = master as any;
 
   m.processManager = {
@@ -54,7 +53,6 @@ function stubMaster(master: MasterOrchestrator, ctx: Ctx): void {
       ctx.messageCallbacks.set(workerId, onMessage);
       const pid = ctx.nextPid++;
       return {
-        // biome-ignore lint/suspicious/noExplicitAny: stub subprocess
         proc: {} as any,
         pid,
         stdout: new ReadableStream({

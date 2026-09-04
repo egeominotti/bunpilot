@@ -2,7 +2,7 @@
 
 Read [AGENTS.md](./AGENTS.md) before making changes. It defines the architecture, safety invariants, required checks, and release policy.
 
-Use a focused branch and include a regression test with each bug fix. Use Biome only; do not add ESLint or Prettier. Sequence-dependent behavior needs deterministic model-based coverage in addition to focused unit or integration tests.
+Use a focused branch and include a regression test with each bug fix. Use Oxfmt and Oxlint only. Sequence-dependent behavior needs deterministic fast-check model-based coverage in addition to focused unit or integration tests.
 
 Before opening a pull request, run:
 

@@ -58,7 +58,6 @@ function makeConfig(name: string): AppConfig {
 }
 
 function stub(master: MasterOrchestrator, ctx: Ctx): void {
-  // biome-ignore lint/suspicious/noExplicitAny: test reaches into private fields
   const m = master as any;
   let nextPid = 5000;
 
@@ -132,7 +131,6 @@ const openMasters: Array<{ master: MasterOrchestrator; ctx: Ctx }> = [];
 afterEach(async () => {
   for (const { master, ctx } of openMasters.splice(0)) {
     ctx.killDelay = 0;
-    // biome-ignore lint/suspicious/noExplicitAny: private registry access
     const names = [...((master as any).apps as Map<string, unknown>).keys()];
     await Promise.allSettled(names.map((n) => master.deleteApp(n)));
   }

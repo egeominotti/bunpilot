@@ -24,13 +24,13 @@ bunpilot e' un process manager nativo per Bun che fornisce:
 
 **Perche' bunpilot esiste:**
 
-| Problema | Stato attuale | bunpilot |
-|----------|--------------|-------|
-| `node:cluster` in Bun | Parziale, no handle passing | Non lo usa. Bun.spawn() + reusePort |
-| PM2 con Bun | Cluster mode rotto | Nativo, zero hack |
-| Scaling multi-core | Nessuna soluzione | `bunpilot start -i max` |
-| Zero-downtime deploy | Manuale | `bunpilot reload` |
-| Process monitoring | Niente di Bun-native | `bunpilot monit` con metriche real-time |
+| Problema              | Stato attuale               | bunpilot                                |
+| --------------------- | --------------------------- | --------------------------------------- |
+| `node:cluster` in Bun | Parziale, no handle passing | Non lo usa. Bun.spawn() + reusePort     |
+| PM2 con Bun           | Cluster mode rotto          | Nativo, zero hack                       |
+| Scaling multi-core    | Nessuna soluzione           | `bunpilot start -i max`                 |
+| Zero-downtime deploy  | Manuale                     | `bunpilot reload`                       |
+| Process monitoring    | Niente di Bun-native        | `bunpilot monit` con metriche real-time |
 
 **Quick start - 30 secondi:**
 
@@ -56,12 +56,14 @@ bunpilot monit
 ```typescript
 // bunpilot.config.ts
 export default {
-  apps: [{
-    name: 'api',
-    script: 'src/server.ts',
-    instances: 'max',
-    port: 3000,
-  }]
+  apps: [
+    {
+      name: 'api',
+      script: 'src/server.ts',
+      instances: 'max',
+      port: 3000,
+    },
+  ],
 };
 ```
 
@@ -83,46 +85,46 @@ bunpilot start server.ts -i max --port 3000
 
 ### 2.1 Cosa prendiamo da PM2
 
-| Concetto PM2 | bunpilot | Note |
-|--------------|-------|------|
-| Cluster mode (N istanze) | Si | Via reusePort (non node:cluster) |
-| Auto-restart on crash | Si | Con exponential backoff |
-| Zero-downtime reload | Si | Rolling restart, 1 worker alla volta |
-| Daemon mode | Si | Opzionale, foreground di default |
-| Log management | Si | Cattura + rotazione per dimensione |
-| Process list (pm2 ls) | Si | `bunpilot ls` con tabella formattata |
-| Monit (pm2 monit) | Si | TUI con CPU, memory, restarts |
-| Ecosystem config file | Si | `bunpilot.config.ts` (TypeScript-first) |
-| Startup scripts | Si | systemd, launchd |
-| Graceful shutdown | Si | SIGTERM + timeout + SIGKILL |
-| Environment variables | Si | Per-app env in config |
-| Watch & restart | No (v1) | Solo production, no dev tooling |
-| Deploy system | No | Fuori scope |
-| PM2 Plus (cloud) | No | Fuori scope |
+| Concetto PM2             | bunpilot | Note                                    |
+| ------------------------ | -------- | --------------------------------------- |
+| Cluster mode (N istanze) | Si       | Via reusePort (non node:cluster)        |
+| Auto-restart on crash    | Si       | Con exponential backoff                 |
+| Zero-downtime reload     | Si       | Rolling restart, 1 worker alla volta    |
+| Daemon mode              | Si       | Opzionale, foreground di default        |
+| Log management           | Si       | Cattura + rotazione per dimensione      |
+| Process list (pm2 ls)    | Si       | `bunpilot ls` con tabella formattata    |
+| Monit (pm2 monit)        | Si       | TUI con CPU, memory, restarts           |
+| Ecosystem config file    | Si       | `bunpilot.config.ts` (TypeScript-first) |
+| Startup scripts          | Si       | systemd, launchd                        |
+| Graceful shutdown        | Si       | SIGTERM + timeout + SIGKILL             |
+| Environment variables    | Si       | Per-app env in config                   |
+| Watch & restart          | No (v1)  | Solo production, no dev tooling         |
+| Deploy system            | No       | Fuori scope                             |
+| PM2 Plus (cloud)         | No       | Fuori scope                             |
 
 ### 2.2 Cosa prendiamo da systemd
 
-| Concetto systemd | bunpilot | Note |
-|------------------|-------|------|
-| Service supervision | Si | Master monitora worker |
-| Restart policies | Si | always, on-failure, never |
-| Restart backoff | Si | Exponential con cap |
-| Resource limits | Parziale | Solo memory limit (max_memory_restart) |
-| Journal (log) | Si | Log per-worker con rotazione |
-| Socket activation | No | Fuori scope |
-| Dependencies | No | Un processo = un'app, niente DAG |
+| Concetto systemd    | bunpilot | Note                                   |
+| ------------------- | -------- | -------------------------------------- |
+| Service supervision | Si       | Master monitora worker                 |
+| Restart policies    | Si       | always, on-failure, never              |
+| Restart backoff     | Si       | Exponential con cap                    |
+| Resource limits     | Parziale | Solo memory limit (max_memory_restart) |
+| Journal (log)       | Si       | Log per-worker con rotazione           |
+| Socket activation   | No       | Fuori scope                            |
+| Dependencies        | No       | Un processo = un'app, niente DAG       |
 
 ### 2.3 Cosa prendiamo da Docker/K8s
 
-| Concetto Docker/K8s | bunpilot | Note |
-|---------------------|-------|------|
-| Health checks | Si | HTTP + IPC, configurabili |
-| Readiness probes | Si | Worker IPC "ready" signal |
-| Liveness probes | Si | Heartbeat + HTTP health |
-| Graceful shutdown | Si | SIGTERM con grace period |
-| Rolling updates | Si | `bunpilot reload` = rolling restart |
-| Foreground process | Si | Default mode (PID 1 friendly) |
-| Resource monitoring | Si | CPU, memory per worker |
+| Concetto Docker/K8s | bunpilot | Note                                |
+| ------------------- | -------- | ----------------------------------- |
+| Health checks       | Si       | HTTP + IPC, configurabili           |
+| Readiness probes    | Si       | Worker IPC "ready" signal           |
+| Liveness probes     | Si       | Heartbeat + HTTP health             |
+| Graceful shutdown   | Si       | SIGTERM con grace period            |
+| Rolling updates     | Si       | `bunpilot reload` = rolling restart |
+| Foreground process  | Si       | Default mode (PID 1 friendly)       |
+| Resource monitoring | Si       | CPU, memory per worker              |
 
 ---
 
@@ -132,20 +134,20 @@ bunpilot usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
 
 **API Bun utilizzate:**
 
-| Funzionalita' | API Bun Nativa | Alternativa npm (NON usata) |
-|---------------|----------------|----------------------------|
-| Process spawn | `Bun.spawn()` | child_process, execa |
-| IPC | `Bun.spawn({ ipc })` | node:cluster |
-| TCP Proxy | `Bun.listen()` + `Bun.connect()` | http-proxy, net |
-| HTTP Health | `fetch()` (built-in) | axios, node-fetch |
-| HTTP Metrics | `Bun.serve()` | express, fastify |
-| SQLite State | `bun:sqlite` (built-in) | better-sqlite3 |
-| File I/O | `Bun.file()`, `Bun.write()` | fs, node:fs |
-| Unix Socket | `Bun.listen({ unix })` | net.createServer |
-| Signal Handling | `process.on('SIGTERM')` | - |
-| Hashing | `Bun.hash()` | crypto |
-| Test | `bun:test` | jest, vitest |
-| Bundling | `Bun.build()` | esbuild, webpack |
+| Funzionalita'   | API Bun Nativa                   | Alternativa npm (NON usata) |
+| --------------- | -------------------------------- | --------------------------- |
+| Process spawn   | `Bun.spawn()`                    | child_process, execa        |
+| IPC             | `Bun.spawn({ ipc })`             | node:cluster                |
+| TCP Proxy       | `Bun.listen()` + `Bun.connect()` | http-proxy, net             |
+| HTTP Health     | `fetch()` (built-in)             | axios, node-fetch           |
+| HTTP Metrics    | `Bun.serve()`                    | express, fastify            |
+| SQLite State    | `bun:sqlite` (built-in)          | better-sqlite3              |
+| File I/O        | `Bun.file()`, `Bun.write()`      | fs, node:fs                 |
+| Unix Socket     | `Bun.listen({ unix })`           | net.createServer            |
+| Signal Handling | `process.on('SIGTERM')`          | -                           |
+| Hashing         | `Bun.hash()`                     | crypto                      |
+| Test            | `bun:test`                       | jest, vitest                |
+| Bundling        | `Bun.build()`                    | esbuild, webpack            |
 
 **Principi di codice:**
 
@@ -247,6 +249,7 @@ bunpilot usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
 ### 4.3 Due modalita' di esecuzione
 
 **Foreground (default, Docker-friendly):**
+
 - bunpilot e' il processo in primo piano (PID 1 in Docker)
 - stdout/stderr dei worker multiplexati con prefissi
 - SIGTERM/SIGINT → graceful shutdown di tutti i worker
@@ -254,6 +257,7 @@ bunpilot usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
 - Control socket comunque attivo (CLI puo' connettersi)
 
 **Daemon (opzionale, bare metal):**
+
 - bunpilot si stacca dal terminale
 - PID file in `~/.bunpilot/bunpilot.pid`
 - Log del master in `~/.bunpilot/bunpilot-daemon.log`
@@ -317,14 +321,14 @@ bunpilot usa **esclusivamente** le API native di Bun. Nessun pacchetto npm.
 
 ```typescript
 const TRANSITIONS: Record<WorkerState, WorkerState[]> = {
-  spawning:  ['starting', 'crashed'],
-  starting:  ['online', 'errored', 'crashed'],
-  online:    ['draining', 'crashed'],
-  draining:  ['stopping', 'crashed'],
-  stopping:  ['stopped', 'crashed'],
-  stopped:   ['spawning'],          // restart manuale
-  crashed:   ['spawning', 'errored'], // auto-restart o give up
-  errored:   ['spawning'],          // solo restart --force
+  spawning: ['starting', 'crashed'],
+  starting: ['online', 'errored', 'crashed'],
+  online: ['draining', 'crashed'],
+  draining: ['stopping', 'crashed'],
+  stopping: ['stopped', 'crashed'],
+  stopped: ['spawning'], // restart manuale
+  crashed: ['spawning', 'errored'], // auto-restart o give up
+  errored: ['spawning'], // solo restart --force
 };
 ```
 
@@ -332,23 +336,23 @@ const TRANSITIONS: Record<WorkerState, WorkerState[]> = {
 
 ```typescript
 type WorkerState =
-  | 'spawning'    // Bun.spawn() chiamato, processo in avvio
-  | 'starting'    // Processo attivo, attesa "ready"
-  | 'online'      // Worker pronto, serve traffico
-  | 'draining'    // Shutdown graceful, no nuove connessioni
-  | 'stopping'    // SIGTERM inviato, attesa exit
-  | 'stopped'     // Uscito pulito (exit code 0)
-  | 'errored'     // Troppi crash, rinuncia
-  | 'crashed';    // Uscito anomalo, verra' riavviato
+  | 'spawning' // Bun.spawn() chiamato, processo in avvio
+  | 'starting' // Processo attivo, attesa "ready"
+  | 'online' // Worker pronto, serve traffico
+  | 'draining' // Shutdown graceful, no nuove connessioni
+  | 'stopping' // SIGTERM inviato, attesa exit
+  | 'stopped' // Uscito pulito (exit code 0)
+  | 'errored' // Troppi crash, rinuncia
+  | 'crashed'; // Uscito anomalo, verra' riavviato
 
 interface WorkerInfo {
-  id: number;                    // 0-based index nel gruppo
-  pid: number;                   // OS process ID
+  id: number; // 0-based index nel gruppo
+  pid: number; // OS process ID
   state: WorkerState;
-  startedAt: number;             // timestamp epoch ms
-  readyAt: number | null;        // quando ha inviato "ready"
-  restartCount: number;          // restart totali per questo slot
-  consecutiveCrashes: number;    // si resetta dopo run stabile
+  startedAt: number; // timestamp epoch ms
+  readyAt: number | null; // quando ha inviato "ready"
+  restartCount: number; // restart totali per questo slot
+  consecutiveCrashes: number; // si resetta dopo run stabile
   lastCrashAt: number | null;
   exitCode: number | null;
   signalCode: string | null;
@@ -357,7 +361,7 @@ interface WorkerInfo {
 }
 
 interface MemoryMetrics {
-  rss: number;          // bytes
+  rss: number; // bytes
   heapTotal: number;
   heapUsed: number;
   external: number;
@@ -365,9 +369,9 @@ interface MemoryMetrics {
 }
 
 interface CpuMetrics {
-  user: number;         // microseconds
+  user: number; // microseconds
   system: number;
-  percentage: number;   // calcolato dal master tramite delta
+  percentage: number; // calcolato dal master tramite delta
   timestamp: number;
 }
 ```
@@ -400,10 +404,10 @@ interface WorkerMetricsPayload {
     user: number;
     system: number;
   };
-  eventLoopLag?: number;        // ms
+  eventLoopLag?: number; // ms
   activeHandles?: number;
   activeRequests?: number;
-  custom?: Record<string, number>;  // contatori user-defined
+  custom?: Record<string, number>; // contatori user-defined
 }
 ```
 
@@ -411,9 +415,9 @@ interface WorkerMetricsPayload {
 
 ```typescript
 type MasterMessage =
-  | { type: 'shutdown'; timeout: number }      // shutdown graceful
-  | { type: 'ping' }                           // health check IPC
-  | { type: 'collect-metrics' }                // richiedi metriche adesso
+  | { type: 'shutdown'; timeout: number } // shutdown graceful
+  | { type: 'ping' } // health check IPC
+  | { type: 'collect-metrics' } // richiedi metriche adesso
   | { type: 'config-update'; config: Partial<AppConfig> };
 ```
 
@@ -504,6 +508,7 @@ const server = Bun.serve({
 ```
 
 bunpilot rileva che il worker non invia `ready` via IPC e usa il fallback:
+
 1. Attende `readyTimeout` (30s default) per IPC "ready"
 2. Se non arriva, prova HTTP GET su `http://127.0.0.1:{port}/health`
 3. Se HTTP risponde 2xx/3xx, il worker e' considerato online
@@ -622,6 +627,7 @@ $ bunpilot reload api
 `bunpilot.config.ts` (primario) con fallback a `bunpilot.config.js` e `bunpilot.json`.
 
 **Precedenza:**
+
 ```
 CLI flags  >  Environment variables  >  Config file  >  Defaults
 ```
@@ -633,12 +639,14 @@ CLI flags  >  Environment variables  >  Config file  >  Defaults
 import type { BunpilotConfig } from 'bunpilot';
 
 export default {
-  apps: [{
-    name: 'api',
-    script: 'src/server.ts',
-    instances: 'max',
-    port: 3000,
-  }],
+  apps: [
+    {
+      name: 'api',
+      script: 'src/server.ts',
+      instances: 'max',
+      port: 3000,
+    },
+  ],
 } satisfies BunpilotConfig;
 ```
 
@@ -665,19 +673,19 @@ export default {
       healthCheck: {
         enabled: true,
         path: '/health',
-        interval: 30_000,        // ogni 30s
-        timeout: 5_000,          // 5s per rispondere
-        unhealthyThreshold: 3,   // 3 fallimenti consecutivi
+        interval: 30_000, // ogni 30s
+        timeout: 5_000, // 5s per rispondere
+        unhealthyThreshold: 3, // 3 fallimenti consecutivi
       },
 
       // Crash recovery
       maxRestarts: 15,
-      maxRestartWindow: 900_000,  // 15 minuti
-      minUptime: 30_000,          // 30s = run stabile
+      maxRestartWindow: 900_000, // 15 minuti
+      minUptime: 30_000, // 30s = run stabile
       backoff: {
-        initial: 1_000,           // 1s primo retry
+        initial: 1_000, // 1s primo retry
         multiplier: 2,
-        max: 30_000,              // 30s cap
+        max: 30_000, // 30s cap
       },
 
       // Graceful shutdown
@@ -687,7 +695,7 @@ export default {
 
       // Log
       logs: {
-        maxSize: 10 * 1024 * 1024,  // 10MB
+        maxSize: 10 * 1024 * 1024, // 10MB
         maxFiles: 5,
       },
 
@@ -702,10 +710,10 @@ export default {
       // Clustering
       clustering: {
         enabled: true,
-        strategy: 'auto',            // auto | reusePort | proxy
+        strategy: 'auto', // auto | reusePort | proxy
         rollingRestart: {
-          batchSize: 1,               // 1 worker alla volta
-          batchDelay: 1_000,          // 1s tra batch
+          batchSize: 1, // 1 worker alla volta
+          batchDelay: 1_000, // 1s tra batch
         },
       },
     },
@@ -718,7 +726,7 @@ export default {
       maxRestartWindow: 600_000,
       minUptime: 10_000,
       backoff: { initial: 2_000, multiplier: 2, max: 60_000 },
-      killTimeout: 30_000,  // queue worker ha bisogno di piu' tempo per drain
+      killTimeout: 30_000, // queue worker ha bisogno di piu' tempo per drain
     },
   ],
 
@@ -757,51 +765,51 @@ interface AppConfig {
 
   /** Health check HTTP */
   healthCheck?: {
-    enabled: boolean;                    // default true
-    path: string;                        // default "/health"
-    interval: number;                    // ms, default 30000
-    timeout: number;                     // ms, default 5000
-    unhealthyThreshold: number;          // default 3
+    enabled: boolean; // default true
+    path: string; // default "/health"
+    interval: number; // ms, default 30000
+    timeout: number; // ms, default 5000
+    unhealthyThreshold: number; // default 3
   };
 
   /** Crash recovery */
-  maxRestarts: number;                   // default 15
-  maxRestartWindow: number;              // ms, default 900000
-  minUptime: number;                     // ms, default 30000
+  maxRestarts: number; // default 15
+  maxRestartWindow: number; // ms, default 900000
+  minUptime: number; // ms, default 30000
   backoff: {
-    initial: number;                     // ms, default 1000
-    multiplier: number;                  // default 2
-    max: number;                         // ms, default 30000
+    initial: number; // ms, default 1000
+    multiplier: number; // default 2
+    max: number; // ms, default 30000
   };
 
   /** Graceful shutdown */
-  killTimeout: number;                   // ms, default 5000
-  shutdownSignal: 'SIGTERM' | 'SIGINT';  // default "SIGTERM"
-  readyTimeout: number;                  // ms, default 30000
+  killTimeout: number; // ms, default 5000
+  shutdownSignal: 'SIGTERM' | 'SIGINT'; // default "SIGTERM"
+  readyTimeout: number; // ms, default 30000
 
   /** Log */
   logs?: {
     outFile?: string;
     errFile?: string;
-    maxSize: number;                     // bytes, default 10MB
-    maxFiles: number;                    // default 5
+    maxSize: number; // bytes, default 10MB
+    maxFiles: number; // default 5
   };
 
   /** Metriche */
   metrics?: {
-    enabled: boolean;                    // default true
-    httpPort?: number;                   // default 9615
-    prometheus: boolean;                 // default false
-    collectInterval: number;             // ms, default 5000
+    enabled: boolean; // default true
+    httpPort?: number; // default 9615
+    prometheus: boolean; // default false
+    collectInterval: number; // ms, default 5000
   };
 
   /** Clustering */
   clustering?: {
-    enabled: boolean;                    // default true quando instances > 1
-    strategy: 'reusePort' | 'proxy' | 'auto';  // default "auto"
+    enabled: boolean; // default true quando instances > 1
+    strategy: 'reusePort' | 'proxy' | 'auto'; // default "auto"
     rollingRestart: {
-      batchSize: number;                 // default 1
-      batchDelay: number;                // ms, default 1000
+      batchSize: number; // default 1
+      batchDelay: number; // ms, default 1000
     };
   };
 }
@@ -912,8 +920,12 @@ class MasterProxy {
               data(clientSocket, data) {
                 serverSocket.write(data);
               },
-              close() { serverSocket.end(); },
-              error() { serverSocket.end(); },
+              close() {
+                serverSocket.end();
+              },
+              error() {
+                serverSocket.end();
+              },
             },
           });
         },
@@ -925,7 +937,7 @@ class MasterProxy {
   }
 
   private nextAliveWorker(): { port: number } | null {
-    const alive = this.workers.filter(w => w.alive);
+    const alive = this.workers.filter((w) => w.alive);
     if (alive.length === 0) return null;
     const worker = alive[this.currentIndex % alive.length];
     this.currentIndex++;
@@ -1106,7 +1118,7 @@ class CrashRecovery {
     // Calcola delay
     const delay = Math.min(
       config.backoff.initial * Math.pow(config.backoff.multiplier, state.consecutiveCrashes - 1),
-      config.backoff.max
+      config.backoff.max,
     );
     state.nextRestartAt = now + delay;
 
@@ -1222,7 +1234,9 @@ const proc = Bun.spawn({
   cmd: ['bun', 'run', config.script],
   stdout: 'pipe',
   stderr: 'pipe',
-  ipc(message) { /* gestisci IPC */ },
+  ipc(message) {
+    /* gestisci IPC */
+  },
   env: workerEnv,
 });
 
@@ -1248,10 +1262,10 @@ const reader = proc.stdout.getReader();
 
 Rotazione per dimensione (non per tempo):
 
-| Parametro | Default | Descrizione |
-|-----------|---------|-------------|
-| `maxSize` | 10 MB | Dimensione max per file log |
-| `maxFiles` | 5 | Numero max file rotati |
+| Parametro  | Default | Descrizione                 |
+| ---------- | ------- | --------------------------- |
+| `maxSize`  | 10 MB   | Dimensione max per file log |
+| `maxFiles` | 5       | Numero max file rotati      |
 
 ```
 Rotazione:
@@ -1312,7 +1326,7 @@ class MetricsAggregator {
     }
 
     const elapsedMs = Date.now() - prev.time;
-    const userDelta = (current.user - prev.user) / 1000;   // μs → ms
+    const userDelta = (current.user - prev.user) / 1000; // μs → ms
     const systemDelta = (current.system - prev.system) / 1000;
     const cpuMs = userDelta + systemDelta;
     const percent = (cpuMs / elapsedMs) * 100;
@@ -1465,15 +1479,15 @@ DELETE FROM restart_history
 
 ### 15.3 Vantaggi di SQLite vs pidfile
 
-| Aspetto | pidfile | SQLite |
-|---------|---------|--------|
-| Restart history | Perso | Persistente |
-| Crash count per window | In-memory, perso al restart daemon | Persistente |
-| Metriche storiche | Nessuna | Ultime 24h |
-| Config snapshot | Nessuno | Salvato per recovery |
-| Concorrenza | Lock file fragile | WAL mode, reads concorrenti |
-| Query | Impossibile | SQL arbitrario (debug, analytics) |
-| Recovery dopo crash daemon | Nessuno | Ricostruisce stato completo |
+| Aspetto                    | pidfile                            | SQLite                            |
+| -------------------------- | ---------------------------------- | --------------------------------- |
+| Restart history            | Perso                              | Persistente                       |
+| Crash count per window     | In-memory, perso al restart daemon | Persistente                       |
+| Metriche storiche          | Nessuna                            | Ultime 24h                        |
+| Config snapshot            | Nessuno                            | Salvato per recovery              |
+| Concorrenza                | Lock file fragile                  | WAL mode, reads concorrenti       |
+| Query                      | Impossibile                        | SQL arbitrario (debug, analytics) |
+| Recovery dopo crash daemon | Nessuno                            | Ricostruisce stato completo       |
 
 ---
 
@@ -1499,14 +1513,14 @@ CLIENT chiude (o mantiene per streaming)
 ```typescript
 /** Richiesta dal CLI */
 interface ControlRequest {
-  id: string;                    // UUID per correlazione
-  cmd: string;                   // nome comando
+  id: string; // UUID per correlazione
+  cmd: string; // nome comando
   args: Record<string, unknown>;
 }
 
 /** Risposta dal daemon */
 interface ControlResponse {
-  id: string;                    // matcha request.id
+  id: string; // matcha request.id
   ok: boolean;
   data?: unknown;
   error?: string;
@@ -1517,30 +1531,31 @@ interface ControlStreamChunk {
   id: string;
   stream: true;
   data: unknown;
-  done?: boolean;                // true = ultimo chunk
+  done?: boolean; // true = ultimo chunk
 }
 ```
 
 ### 16.4 Comandi disponibili
 
-| Comando | Args | Risposta |
-|---------|------|----------|
-| `list` | `{}` | Array di AppStatus |
-| `start` | `{ config?, script?, instances?, port?, name? }` | `{ ok: true }` |
-| `stop` | `{ app: string }` | `{ ok: true }` |
-| `restart` | `{ app: string, force?: boolean }` | `{ ok: true }` |
-| `reload` | `{ app: string }` | `{ ok: true }` (streaming progress) |
-| `delete` | `{ app: string }` | `{ ok: true }` |
-| `status` | `{ app: string }` | Stato dettagliato |
-| `logs` | `{ app: string, lines?: number }` | Streaming log chunks |
-| `metrics` | `{ app: string }` | Metriche correnti |
-| `ping` | `{}` | `{ ok: true, uptime: number }` |
-| `dump` | `{}` | Stato completo interno (debug) |
-| `kill-daemon` | `{}` | `{ ok: true }` + daemon termina |
+| Comando       | Args                                             | Risposta                            |
+| ------------- | ------------------------------------------------ | ----------------------------------- |
+| `list`        | `{}`                                             | Array di AppStatus                  |
+| `start`       | `{ config?, script?, instances?, port?, name? }` | `{ ok: true }`                      |
+| `stop`        | `{ app: string }`                                | `{ ok: true }`                      |
+| `restart`     | `{ app: string, force?: boolean }`               | `{ ok: true }`                      |
+| `reload`      | `{ app: string }`                                | `{ ok: true }` (streaming progress) |
+| `delete`      | `{ app: string }`                                | `{ ok: true }`                      |
+| `status`      | `{ app: string }`                                | Stato dettagliato                   |
+| `logs`        | `{ app: string, lines?: number }`                | Streaming log chunks                |
+| `metrics`     | `{ app: string }`                                | Metriche correnti                   |
+| `ping`        | `{}`                                             | `{ ok: true, uptime: number }`      |
+| `dump`        | `{}`                                             | Stato completo interno (debug)      |
+| `kill-daemon` | `{}`                                             | `{ ok: true }` + daemon termina     |
 
 ### 16.5 Perche' NDJSON e non msgpack
 
 Il control plane vede ~10 messaggi/secondo al picco. NDJSON aggiunge ~50μs di overhead per messaggio rispetto a msgpack. In cambio:
+
 - Human-debuggable: `socat UNIX:~/.bunpilot/bunpilot.sock -` per debug
 - Zero dipendenze: `JSON.parse`/`JSON.stringify` nativi e ottimizzati
 - Bun ottimizza JSON via SIMD internamente
@@ -1557,6 +1572,7 @@ bunpilot start bunpilot.config.ts --no-daemon  # esplicito
 ```
 
 Comportamento:
+
 - Master resta in primo piano (PID 1 in Docker)
 - stdout/stderr dei worker multiplexati con prefissi `[app:id]`
 - SIGTERM/SIGINT → graceful shutdown di tutti i worker
@@ -1575,6 +1591,7 @@ bunpilot daemon start
 ```
 
 Comportamento:
+
 - Master si stacca dal terminale
 - PID file in `~/.bunpilot/bunpilot.pid`
 - stdout/stderr del master in `~/.bunpilot/bunpilot-daemon.log`
@@ -1590,8 +1607,7 @@ Bun non ha `fork()` nativo. L'approccio usa Bun.spawn per lanciare un processo f
 ```typescript
 function daemonize(configPath: string): void {
   const child = Bun.spawn({
-    cmd: ['bun', 'run', import.meta.dir + '/master.ts',
-          '--config', configPath, '--daemonized'],
+    cmd: ['bun', 'run', import.meta.dir + '/master.ts', '--config', configPath, '--daemonized'],
     stdio: ['ignore', 'ignore', 'ignore'],
     env: { ...process.env, BUNPILOT_DAEMON: '1' },
   });
@@ -1648,18 +1664,18 @@ Signal ricevuto (SIGTERM/SIGINT)
 ```typescript
 function setupSignalHandlers(master: MasterProcess): void {
   process.on('SIGTERM', () => master.shutdown('SIGTERM'));
-  process.on('SIGINT',  () => master.shutdown('SIGINT'));
-  process.on('SIGHUP',  () => master.reloadAll());
-  process.on('SIGPIPE', () => {});  // ignora broken pipe
+  process.on('SIGINT', () => master.shutdown('SIGINT'));
+  process.on('SIGHUP', () => master.reloadAll());
+  process.on('SIGPIPE', () => {}); // ignora broken pipe
 }
 ```
 
 ### 18.3 Timeout
 
-| Config | Default | Descrizione |
-|--------|---------|-------------|
-| `killTimeout` | 5000ms | Tempo per graceful exit dopo SIGTERM |
-| `shutdownSignal` | SIGTERM | Segnale inviato per primo |
+| Config           | Default | Descrizione                          |
+| ---------------- | ------- | ------------------------------------ |
+| `killTimeout`    | 5000ms  | Tempo per graceful exit dopo SIGTERM |
+| `shutdownSignal` | SIGTERM | Segnale inviato per primo            |
 
 Se il worker non esce entro `killTimeout`, il master invia `SIGKILL` (non intercettabile, uscita forzata).
 
@@ -1671,7 +1687,7 @@ Se il worker non esce entro `killTimeout`, il master invia `SIGKILL` (non interc
 
 ```typescript
 import { chmodSync } from 'node:fs';
-chmodSync(SOCKET_PATH, 0o600);  // solo owner read/write
+chmodSync(SOCKET_PATH, 0o600); // solo owner read/write
 ```
 
 ### 19.2 Environment Sanitization
@@ -1685,7 +1701,10 @@ const INTERNAL_KEYS = new Set([
   'BUNPILOT_INTERNAL_PORT_BASE',
 ]);
 
-function sanitizeEnv(masterEnv: NodeJS.ProcessEnv, workerEnv: Record<string, string>): Record<string, string> {
+function sanitizeEnv(
+  masterEnv: NodeJS.ProcessEnv,
+  workerEnv: Record<string, string>,
+): Record<string, string> {
   const env = { ...masterEnv, ...workerEnv };
   for (const key of INTERNAL_KEYS) delete env[key];
   return env;
@@ -1827,44 +1846,44 @@ bunpilot/
 
 ### Stima LOC
 
-| Modulo | Source LOC | Test LOC |
-|--------|-----------|----------|
-| cli/ | ~1,540 | - |
-| core/ | ~1,020 | ~770 |
-| config/ | ~500 | - |
-| ipc/ | ~230 | - |
-| control/ | ~710 | ~350 |
-| cluster/ | ~340 | ~200 |
-| health/ | ~180 | ~150 |
-| logs/ | ~350 | ~150 |
-| metrics/ | ~400 | - |
-| store/ | ~360 | ~200 |
-| daemon/ | ~180 | - |
-| sdk/ | ~100 | - |
-| integration test | - | ~700 |
-| **Totale** | **~5,910** | **~2,520** |
-| **Grand Total** | | **~8,430** |
+| Modulo           | Source LOC | Test LOC   |
+| ---------------- | ---------- | ---------- |
+| cli/             | ~1,540     | -          |
+| core/            | ~1,020     | ~770       |
+| config/          | ~500       | -          |
+| ipc/             | ~230       | -          |
+| control/         | ~710       | ~350       |
+| cluster/         | ~340       | ~200       |
+| health/          | ~180       | ~150       |
+| logs/            | ~350       | ~150       |
+| metrics/         | ~400       | -          |
+| store/           | ~360       | ~200       |
+| daemon/          | ~180       | -          |
+| sdk/             | ~100       | -          |
+| integration test | -          | ~700       |
+| **Totale**       | **~5,910** | **~2,520** |
+| **Grand Total**  |            | **~8,430** |
 
 ---
 
 ## 21. Performance Targets
 
-| Operazione | Target | Note |
-|-----------|--------|------|
-| Worker spawn | <50ms | Bun.spawn() e' 60% piu' veloce di Node |
-| Worker ready (con SDK) | <100ms | IPC "ready" immediato |
-| Worker ready (senza SDK) | <5s | HTTP health check fallback |
-| Zero-downtime reload (4 worker) | <10s | 4 batch x (spawn + ready + drain) |
-| Memory overhead master | <20 MB | Solo supervisione, no user code |
-| Memory overhead per worker | ~2 KB tracking | Stato in-memory nel master |
-| Proxy latency (macOS) | <100μs | TCP forwarding, no parsing |
-| Health check overhead | <1ms | fetch() locale |
-| Metrics collection | <1ms per worker | IPC message, no I/O |
-| CLI response time | <50ms | Unix socket + JSON parse |
-| SQLite write (state update) | <1ms | WAL mode, prepared statements |
-| Log write overhead | <10μs per riga | Bun.write() buffered |
-| Crash detection | <1s | process.exited event immediato |
-| Signal propagation | <10ms | Master → SIGTERM → tutti i worker |
+| Operazione                      | Target          | Note                                   |
+| ------------------------------- | --------------- | -------------------------------------- |
+| Worker spawn                    | <50ms           | Bun.spawn() e' 60% piu' veloce di Node |
+| Worker ready (con SDK)          | <100ms          | IPC "ready" immediato                  |
+| Worker ready (senza SDK)        | <5s             | HTTP health check fallback             |
+| Zero-downtime reload (4 worker) | <10s            | 4 batch x (spawn + ready + drain)      |
+| Memory overhead master          | <20 MB          | Solo supervisione, no user code        |
+| Memory overhead per worker      | ~2 KB tracking  | Stato in-memory nel master             |
+| Proxy latency (macOS)           | <100μs          | TCP forwarding, no parsing             |
+| Health check overhead           | <1ms            | fetch() locale                         |
+| Metrics collection              | <1ms per worker | IPC message, no I/O                    |
+| CLI response time               | <50ms           | Unix socket + JSON parse               |
+| SQLite write (state update)     | <1ms            | WAL mode, prepared statements          |
+| Log write overhead              | <10μs per riga  | Bun.write() buffered                   |
+| Crash detection                 | <1s             | process.exited event immediato         |
+| Signal propagation              | <10ms           | Master → SIGTERM → tutti i worker      |
 
 ---
 

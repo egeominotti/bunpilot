@@ -59,7 +59,6 @@ function emptyStream(): ReadableStream {
 }
 
 function stubMaster(master: MasterOrchestrator, ctx: Ctx): void {
-  // biome-ignore lint/suspicious/noExplicitAny: test reaches into private fields
   const m = master as any;
 
   m.processManager = {
@@ -142,7 +141,6 @@ function makeConfig(name: string, port: number): AppConfig {
   };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: test reaches into private fields
 function clearAppTimers(managed: any): void {
   if (!managed) return;
   for (const t of managed.readyTimers.values()) clearTimeout(t);
@@ -167,7 +165,6 @@ test('stopApp/deleteApp are not undone by an in-flight restart', async () => {
 
     const name = `h5-app-${seed}`;
     const config = makeConfig(name, 3000 + seed);
-    // biome-ignore lint/suspicious/noExplicitAny: private registry access
     const m = master as any;
     let managed: unknown;
 

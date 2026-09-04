@@ -118,6 +118,118 @@ describe('MetricsHttpServer', () => {
       const body = await res.text();
       expect(body).toContain('up 1');
     });
+
+    test('coalesces repeated scrapes for a bounded interval', async () => {
+      let now = 1_000;
+      let calls = 0;
+      port = randomPort();
+      server = new MetricsHttpServer(
+        port,
+        makeProvider({ getPrometheusMetrics: () => `up ${++calls}\n` }),
+        { cacheTtlMs: 250, now: () => now },
+      );
+      server.start();
+
+      expect(await fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text())).toBe('up 1\n');
+      expect(await fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text())).toBe('up 1\n');
+      expect(calls).toBe(1);
+
+      now += 250;
+      expect(await fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text())).toBe('up 2\n');
+      expect(calls).toBe(2);
+    });
+
+    test('uses the 250 ms default TTL and expires exactly at the boundary', async () => {
+      let now = 100;
+      let calls = 0;
+      port = randomPort();
+      server = new MetricsHttpServer(
+        port,
+        makeProvider({ getPrometheusMetrics: () => `up ${++calls}\n` }),
+        { now: () => now },
+      );
+      server.start();
+
+      const read = () => fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text());
+      expect(await read()).toBe('up 1\n');
+      now += 249;
+      expect(await read()).toBe('up 1\n');
+      now += 1;
+      expect(await read()).toBe('up 2\n');
+    });
+
+    test('invalid or regressing clocks invalidate instead of preserving stale data', async () => {
+      let now = 1_000;
+      let calls = 0;
+      port = randomPort();
+      server = new MetricsHttpServer(
+        port,
+        makeProvider({ getPrometheusMetrics: () => `up ${++calls}\n` }),
+        { cacheTtlMs: 500, now: () => now },
+      );
+      server.start();
+
+      const read = () => fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text());
+      expect(await read()).toBe('up 1\n');
+      now = 900;
+      expect(await read()).toBe('up 2\n');
+      now = Number.NaN;
+      expect(await read()).toBe('up 3\n');
+      now = Number.POSITIVE_INFINITY;
+      expect(await read()).toBe('up 4\n');
+    });
+
+    test('caps oversized TTLs and handles clock values near numeric overflow', async () => {
+      let now = Number.MAX_SAFE_INTEGER - 500;
+      let calls = 0;
+      port = randomPort();
+      server = new MetricsHttpServer(
+        port,
+        makeProvider({ getPrometheusMetrics: () => `up ${++calls}\n` }),
+        { cacheTtlMs: Number.MAX_VALUE, now: () => now },
+      );
+      server.start();
+
+      const read = () => fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text());
+      expect(await read()).toBe('up 1\n');
+      now = Number.MAX_SAFE_INTEGER - 1;
+      expect(await read()).toBe('up 1\n');
+      now = Number.MAX_SAFE_INTEGER;
+      expect(await read()).toBe('up 2\n');
+    });
+
+    test('does not cache provider failures', async () => {
+      let calls = 0;
+      port = randomPort();
+      server = new MetricsHttpServer(
+        port,
+        makeProvider({
+          getPrometheusMetrics: () => {
+            if (++calls === 1) throw new Error('synthetic provider failure');
+            return 'up 2\n';
+          },
+        }),
+      );
+      server.start();
+
+      expect((await fetch(`http://127.0.0.1:${port}/metrics`)).status).toBe(500);
+      expect(await fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text())).toBe('up 2\n');
+      expect(calls).toBe(2);
+    });
+
+    test('clears cached bodies across a stop/start cycle', async () => {
+      let calls = 0;
+      port = randomPort();
+      server = new MetricsHttpServer(
+        port,
+        makeProvider({ getPrometheusMetrics: () => `up ${++calls}\n` }),
+      );
+      server.start();
+      expect(await fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text())).toBe('up 1\n');
+      server.stop();
+      server.start();
+      expect(await fetch(`http://127.0.0.1:${port}/metrics`).then((r) => r.text())).toBe('up 2\n');
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -139,6 +251,30 @@ describe('MetricsHttpServer', () => {
       const data = (await res.json()) as { apps: { name: string }[] };
       expect(data.apps).toBeDefined();
       expect(data.apps[0].name).toBe('web');
+    });
+
+    test('caches only the fleet response and expires it deterministically', async () => {
+      let now = 5_000;
+      let calls = 0;
+      port = randomPort();
+      server = new MetricsHttpServer(
+        port,
+        makeProvider({ getJsonMetrics: () => ({ generation: ++calls }) }),
+        { cacheTtlMs: 100, now: () => now },
+      );
+      server.start();
+
+      const read = async () =>
+        (await fetch(`http://127.0.0.1:${port}/api/metrics`).then((r) => r.json())) as {
+          generation: number;
+        };
+      expect((await read()).generation).toBe(1);
+      expect((await read()).generation).toBe(1);
+      expect(calls).toBe(1);
+
+      now += 100;
+      expect((await read()).generation).toBe(2);
+      expect(calls).toBe(2);
     });
   });
 
@@ -180,6 +316,27 @@ describe('MetricsHttpServer', () => {
       const data = (await res.json()) as { apps: { name: string; status: string }[] };
       expect(data.apps).toBeDefined();
       expect(data.apps[0].status).toBe('running');
+    });
+
+    test('bounds status staleness and supports disabling the cache', async () => {
+      let calls = 0;
+      port = randomPort();
+      server = new MetricsHttpServer(
+        port,
+        makeProvider({ getStatus: () => ({ generation: ++calls }) }),
+        { cacheTtlMs: 0, now: () => 10_000 },
+      );
+      server.start();
+
+      const first = (await fetch(`http://127.0.0.1:${port}/api/status`).then((r) => r.json())) as {
+        generation: number;
+      };
+      const second = (await fetch(`http://127.0.0.1:${port}/api/status`).then((r) => r.json())) as {
+        generation: number;
+      };
+      expect(first.generation).toBe(1);
+      expect(second.generation).toBe(2);
+      expect(calls).toBe(2);
     });
   });
 

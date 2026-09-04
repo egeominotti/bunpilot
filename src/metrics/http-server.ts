@@ -20,6 +20,18 @@ export interface MetricsDataProvider {
   getStatus(): object;
 }
 
+export interface MetricsHttpServerOptions {
+  /** Short, bounded coalescing window for repeated scrapes. Set to 0 to disable. */
+  cacheTtlMs?: number;
+  /** Injectable monotonic clock for deterministic tests. */
+  now?: () => number;
+}
+
+interface CachedBody {
+  body: string;
+  expiresAt: number;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -29,6 +41,8 @@ const CONTENT_TYPE_PROM = 'text/plain; version=0.0.4; charset=utf-8';
 const CONTENT_TYPE_TEXT = 'text/plain; charset=utf-8';
 /** Minimum gap between error-boundary log lines (see `MetricsHttpServer.start`). */
 const ERROR_LOG_INTERVAL = 10_000;
+const DEFAULT_CACHE_TTL_MS = 250;
+const MAX_CACHE_TTL_MS = 1_000;
 
 // ---------------------------------------------------------------------------
 // MetricsHttpServer
@@ -37,14 +51,25 @@ const ERROR_LOG_INTERVAL = 10_000;
 export class MetricsHttpServer {
   private readonly port: number;
   private readonly provider: MetricsDataProvider;
+  private readonly cacheTtlMs: number;
+  private readonly now: () => number;
   private server: HttpServer | null = null;
+  private prometheusCache: CachedBody | null = null;
+  private jsonMetricsCache: CachedBody | null = null;
+  private statusCache: CachedBody | null = null;
+  private lastNow = 0;
   /** Total requests that hit the error boundary (see `start`). */
   private errorCount = 0;
   private lastErrorLogAt = 0;
 
-  constructor(port: number, provider: MetricsDataProvider) {
+  constructor(port: number, provider: MetricsDataProvider, options: MetricsHttpServerOptions = {}) {
     this.port = port;
     this.provider = provider;
+    const requestedTtl = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+    this.cacheTtlMs = Number.isFinite(requestedTtl)
+      ? Math.min(MAX_CACHE_TTL_MS, Math.max(0, requestedTtl))
+      : 0;
+    this.now = options.now ?? performance.now.bind(performance);
   }
 
   /** Start the HTTP server using Bun.serve(). */
@@ -88,6 +113,7 @@ export class MetricsHttpServer {
 
     this.server.stop(true);
     this.server = null;
+    this.clearCaches();
   }
 
   // -----------------------------------------------------------------------
@@ -138,16 +164,32 @@ export class MetricsHttpServer {
   // -----------------------------------------------------------------------
 
   private handlePrometheus(): Response {
-    const body = this.provider.getPrometheusMetrics();
-    return new Response(body, {
+    const now = this.readNow();
+    let cached = this.prometheusCache;
+    if (!cached || cached.expiresAt <= now) {
+      cached = {
+        body: this.provider.getPrometheusMetrics(),
+        expiresAt: this.expiryFrom(now),
+      };
+      this.prometheusCache = cached;
+    }
+    return new Response(cached.body, {
       status: 200,
       headers: { 'Content-Type': CONTENT_TYPE_PROM },
     });
   }
 
   private handleJsonMetrics(): Response {
-    const data = this.provider.getJsonMetrics();
-    return MetricsHttpServer.json(data);
+    const now = this.readNow();
+    let cached = this.jsonMetricsCache;
+    if (!cached || cached.expiresAt <= now) {
+      cached = {
+        body: JSON.stringify(this.provider.getJsonMetrics()),
+        expiresAt: this.expiryFrom(now),
+      };
+      this.jsonMetricsCache = cached;
+    }
+    return MetricsHttpServer.jsonBody(cached.body);
   }
 
   private handleJsonMetricsForApp(path: string): Response {
@@ -170,8 +212,37 @@ export class MetricsHttpServer {
   }
 
   private handleStatus(): Response {
-    const data = this.provider.getStatus();
-    return MetricsHttpServer.json(data);
+    const now = this.readNow();
+    let cached = this.statusCache;
+    if (!cached || cached.expiresAt <= now) {
+      cached = {
+        body: JSON.stringify(this.provider.getStatus()),
+        expiresAt: this.expiryFrom(now),
+      };
+      this.statusCache = cached;
+    }
+    return MetricsHttpServer.jsonBody(cached.body);
+  }
+
+  /** Normalize an injected clock and fail open (without stale data) on anomalies. */
+  private readNow(): number {
+    const candidate = this.now();
+    if (!Number.isFinite(candidate) || candidate < this.lastNow) {
+      this.clearCaches();
+      return this.lastNow;
+    }
+    this.lastNow = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, candidate));
+    return this.lastNow;
+  }
+
+  private expiryFrom(now: number): number {
+    return Math.min(Number.MAX_SAFE_INTEGER, now + this.cacheTtlMs);
+  }
+
+  private clearCaches(): void {
+    this.prometheusCache = null;
+    this.jsonMetricsCache = null;
+    this.statusCache = null;
   }
 
   // -----------------------------------------------------------------------
@@ -179,7 +250,11 @@ export class MetricsHttpServer {
   // -----------------------------------------------------------------------
 
   private static json(data: object, status = 200): Response {
-    return new Response(JSON.stringify(data), {
+    return MetricsHttpServer.jsonBody(JSON.stringify(data), status);
+  }
+
+  private static jsonBody(body: string, status = 200): Response {
+    return new Response(body, {
       status,
       headers: { 'Content-Type': CONTENT_TYPE_JSON },
     });

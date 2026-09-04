@@ -123,7 +123,9 @@ test('bunpilot collects deep heap/GC/stack telemetry from a real bunqueue worker
   // -- Deep heap ----------------------------------------------------------
   expect(p.heap).toBeDefined();
   expect(p.heap!.heapSize).toBeGreaterThan(0);
-  expect(p.heap!.heapSizeLimit).toBeGreaterThan(0);
+  expect(p.heap!.censusAvailable).toBe(true);
+  expect(p.heap!.v8StatisticsAvailable).toBe(false);
+  expect(p.heap!.heapSizeLimit).toBe(0);
   // The per-object-type census is present (deep composition of the JSC heap).
   expect(p.heap!.topObjectTypes.length).toBeGreaterThan(0);
   for (const entry of p.heap!.topObjectTypes) {

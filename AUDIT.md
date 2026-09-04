@@ -4,9 +4,9 @@ Audit date: 2026-07-23. Scope: handwritten TypeScript/Bun sources; generated and
 
 ## Pass 0 — ground truth
 
-The repository is a TypeScript CLI/daemon built with Bun 1.3.14, using Bun's test runner and `tsc --noEmit` for type checking. Biome is the formatter/linter. Build scripts use `bun build --compile`; GitHub Actions provides Linux/macOS/Windows matrices and release artifacts. The critical modules are configuration validation, daemon boot/PID/socket lifecycle, master/worker lifecycle and reload, process management, proxy/port allocation, health checks, IPC/control framing, persistence, and log/metrics output.
+The repository is a TypeScript CLI/daemon built with Bun 1.4.1, using Bun's test runner and `tsc --noEmit` for type checking. Oxfmt and Oxlint provide formatting and linting. Build scripts use `bun build --compile`; GitHub Actions provides Linux/macOS matrices and release artifacts. The critical modules are configuration validation, daemon boot/PID/socket lifecycle, master/worker lifecycle and reload, process management, proxy/port allocation, health checks, IPC/control framing, persistence, and log/metrics output.
 
-Fast-check is not installed; deterministic model-based tests are implemented in `test/model/invariants.test.ts`. Stryker is not Bun-native, so five plausible mutations were applied manually and reverted after each run.
+Property and model-based tests use fast-check with reproducible seeds and paths. Stryker is not Bun-native, so five plausible mutations were applied manually and reverted after each run.
 
 ## Pass 1 — extracted invariants
 
@@ -212,12 +212,12 @@ Additional regression coverage fixed epoch-zero status, log filename collisions,
 
 ## Pass 4 — mutation testing
 
-| Mutation | Result |
-|---|---|
-| `>=` → `>` in restart window | Caught by `test/core/backoff.test.ts` |
-| readiness predicate inverted | Caught by `test/core/master.test.ts` |
-| remove PID expected-value guard | Caught by `test/daemon/pid.test.ts` |
-| control response size check removed | Caught by `test/control/server.test.ts` timeout |
+| Mutation                               | Result                                                               |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| `>=` → `>` in restart window           | Caught by `test/core/backoff.test.ts`                                |
+| readiness predicate inverted           | Caught by `test/core/master.test.ts`                                 |
+| remove PID expected-value guard        | Caught by `test/daemon/pid.test.ts`                                  |
+| control response size check removed    | Caught by `test/control/server.test.ts` timeout                      |
 | proxy pending-buffer overflow disabled | **Survived** existing tests; restored and recorded as a coverage gap |
 
 The invariant/model suite executes 291k+ assertions. Final CI ran 1,130 tests with 0 failures; coverage was 91.33% functions and 93.34% lines.

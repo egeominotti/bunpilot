@@ -80,7 +80,7 @@ const PER_WORKER_METRICS: MetricDescriptor[] = [
 // -- Deep telemetry: one line per live worker, extracted from WorkerTelemetry --
 
 interface TelemetryDescriptor extends MetricDescriptor {
-  extract: (t: WorkerTelemetry) => number;
+  extract: (t: WorkerTelemetry) => number | null;
 }
 
 const TELEMETRY_METRICS: TelemetryDescriptor[] = [
@@ -99,15 +99,15 @@ const TELEMETRY_METRICS: TelemetryDescriptor[] = [
   },
   {
     name: 'bunpilot_worker_heap_limit_bytes',
-    help: 'Hard heap size limit before OOM',
+    help: 'Best available runtime heap capacity or limit',
     type: 'gauge',
-    extract: (t) => t.heap.heapSizeLimit,
+    extract: (t) => (t.heap.v8StatisticsAvailable === false ? null : t.heap.heapSizeLimit),
   },
   {
     name: 'bunpilot_worker_heap_object_count',
     help: 'Total live objects on the heap',
     type: 'gauge',
-    extract: (t) => t.heap.objectCount,
+    extract: (t) => (t.heap.censusAvailable === false ? null : t.heap.objectCount),
   },
   {
     name: 'bunpilot_worker_heap_array_buffers_bytes',
@@ -119,13 +119,13 @@ const TELEMETRY_METRICS: TelemetryDescriptor[] = [
     name: 'bunpilot_worker_heap_native_contexts',
     help: 'Number of native contexts (realms)',
     type: 'gauge',
-    extract: (t) => t.heap.nativeContexts,
+    extract: (t) => (t.heap.v8StatisticsAvailable === false ? null : t.heap.nativeContexts),
   },
   {
     name: 'bunpilot_worker_heap_detached_contexts',
     help: 'Number of detached contexts (leak signal when > 0)',
     type: 'gauge',
-    extract: (t) => t.heap.detachedContexts,
+    extract: (t) => (t.heap.v8StatisticsAvailable === false ? null : t.heap.detachedContexts),
   },
   // GC (derived)
   {
@@ -154,7 +154,7 @@ const TELEMETRY_METRICS: TelemetryDescriptor[] = [
   },
   {
     name: 'bunpilot_worker_gc_heap_utilization',
-    help: 'usedHeapSize / heapSizeLimit in [0,1]',
+    help: 'Current heap pressure ratio in [0,1]',
     type: 'gauge',
     extract: (t) => t.gc.heapUtilization,
   },
@@ -276,14 +276,31 @@ function safeValue(value: number): number | null {
 
 /** Escape label values for Prometheus text format. */
 function escapeLabelValue(v: string): string {
-  return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  if (!v.includes('\\') && !v.includes('"') && !v.includes('\n')) return v;
+
+  let escaped = '';
+  let start = 0;
+  for (let i = 0; i < v.length; i++) {
+    const char = v[i];
+    let replacement: string | null = null;
+    if (char === '\\') replacement = '\\\\';
+    else if (char === '"') replacement = '\\"';
+    else if (char === '\n') replacement = '\\n';
+    if (replacement === null) continue;
+    escaped += v.slice(start, i) + replacement;
+    start = i + 1;
+  }
+  return escaped + v.slice(start);
 }
 
 /** Render a single metric line with labels. */
 function metricLine(name: string, labels: Record<string, string>, value: number): string {
-  const pairs = Object.entries(labels)
-    .map(([k, v]) => `${k}="${escapeLabelValue(v)}"`)
-    .join(',');
+  let pairs = '';
+  for (const key in labels) {
+    if (!Object.hasOwn(labels, key)) continue;
+    if (pairs) pairs += ',';
+    pairs += `${key}="${escapeLabelValue(labels[key])}"`;
+  }
   return `${name}{${pairs}} ${value}`;
 }
 
@@ -340,7 +357,8 @@ export function formatPrometheus(rawApps: AppMetricsInput[]): string {
         if (!isLive(w.state)) continue;
         const telemetry = w.metrics?.telemetry;
         if (!telemetry) continue;
-        const value = safeValue(desc.extract(telemetry));
+        const extracted = desc.extract(telemetry);
+        const value = extracted === null ? null : safeValue(extracted);
         if (value !== null) {
           lines.push(
             metricLine(desc.name, { app: app.appName, worker: String(w.workerId) }, value),
@@ -356,7 +374,9 @@ export function formatPrometheus(rawApps: AppMetricsInput[]): string {
   for (const app of apps) {
     for (const w of app.workers) {
       if (!isLive(w.state)) continue;
-      const types = w.metrics?.telemetry?.heap.topObjectTypes;
+      const heap = w.metrics?.telemetry?.heap;
+      if (heap?.censusAvailable === false) continue;
+      const types = heap?.topObjectTypes;
       if (!types) continue;
       // Dedup by type: a malformed/hostile payload could carry two buckets with
       // the same type, which would emit an identical (app,worker,type) series

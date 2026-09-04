@@ -2,6 +2,13 @@
 
 All notable changes follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- Replaced Biome with Oxfmt and Oxlint, pinned Bun 1.4.1, and migrated deterministic model tests to fast-check.
+- Reduced telemetry heap walks and coalesced repeated metrics/status serialization behind a bounded cache.
+
 ## 1.0.0 - 2026-07-22
 
 ### Added
@@ -14,7 +21,6 @@ All notable changes follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Replaced ESLint and Prettier with Biome 2.
 - Promoted the project to the stable 1.0 API and documented the supported platform contract.
 - Made daemon PID, socket, and log paths effective and made PID publication a readiness signal.
 

@@ -63,33 +63,37 @@ export interface HeapObjectType {
   count: number;
 }
 
-/** Deep heap composition. Merges bun:jsc heapStats, node:v8 and process. */
+/** Deep heap composition. Uses bun:jsc heapStats, with node:v8 as a fallback. */
 export interface HeapMetrics {
+  /** Whether JSC object-census fields contain measurements instead of unavailable sentinels. */
+  censusAvailable?: boolean;
+  /** Whether V8-compatible allocator/context statistics are available. */
+  v8StatisticsAvailable?: boolean;
   /** Live bytes on the JSC heap (bun:jsc heapStats().heapSize). */
   heapSize: number;
   /** Reserved bytes on the JSC heap (heapCapacity). */
   heapCapacity: number;
   /** Off-heap bytes accounted to the heap (extraMemorySize). */
   extraMemory: number;
-  /** Total live object count. */
+  /** Total live object count (0 when censusAvailable is false). */
   objectCount: number;
   /** Objects protected from GC. */
   protectedObjectCount: number;
   /** Global objects (contexts / realms). */
   globalObjectCount: number;
-  /** node:v8 used_heap_size. */
+  /** Used heap bytes from the best available runtime/process probe. */
   usedHeapSize: number;
-  /** node:v8 total_heap_size. */
+  /** Current heap capacity; sourced from bun:jsc, or node:v8 as a fallback. */
   totalHeapSize: number;
-  /** node:v8 heap_size_limit — the hard ceiling before OOM. */
+  /** V8 hard heap limit (0 when v8StatisticsAvailable is false). */
   heapSizeLimit: number;
-  /** node:v8 malloced_memory. */
+  /** V8 malloc estimate (0 when v8StatisticsAvailable is false). */
   mallocedMemory: number;
-  /** node:v8 peak_malloced_memory. */
+  /** V8 peak malloc estimate (0 when v8StatisticsAvailable is false). */
   peakMallocedMemory: number;
-  /** node:v8 number_of_native_contexts. */
+  /** V8 native context count (0 when v8StatisticsAvailable is false). */
   nativeContexts: number;
-  /** node:v8 number_of_detached_contexts — a leak signal when > 0. */
+  /** V8 detached context count (0 when v8StatisticsAvailable is false). */
   detachedContexts: number;
   /** process.memoryUsage().arrayBuffers. */
   arrayBuffers: number;
@@ -110,7 +114,7 @@ export interface GcMetrics {
   reclaimedBytes: number;
   /** GC cycles inferred from heapSize drops (best-effort, cumulative). */
   inferredCollections: number;
-  /** usedHeapSize / heapSizeLimit in [0,1] — proximity to the OOM ceiling. */
+  /** usedHeapSize / heapSizeLimit in [0,1] — current heap pressure. */
   heapUtilization: number;
   /** bun:jsc totalCompileTime() in ms — cumulative JIT pressure (0 if N/A). */
   compileTimeMs: number;

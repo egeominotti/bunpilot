@@ -24,13 +24,13 @@ Version 1.0 supports Linux and macOS on x64 and arm64. The daemon control plane 
 
 ## Requirements and support
 
-| Component | Supported |
-|---|---|
-| Runtime | Bun 1.3.14+ |
-| Operating systems | Linux, macOS |
-| Architectures | x64, arm64 |
-| Linux libc | glibc, musl release binaries |
-| Configuration | TypeScript, JavaScript, JSON |
+| Component         | Supported                    |
+| ----------------- | ---------------------------- |
+| Runtime           | Bun 1.4.1                    |
+| Operating systems | Linux, macOS                 |
+| Architectures     | x64, arm64                   |
+| Linux libc        | glibc, musl release binaries |
+| Configuration     | TypeScript, JavaScript, JSON |
 
 The standalone Bunpilot executable embeds Bun for the control plane. Managed TypeScript/JavaScript applications still use `bun run` by default, so install Bun on worker hosts unless each app supplies a custom `interpreter`.
 
@@ -60,11 +60,7 @@ bun run build
 Your worker must bind `BUNPILOT_PORT`, announce readiness, and register graceful cleanup:
 
 ```ts
-import {
-  bunpilotOnShutdown,
-  bunpilotReady,
-  bunpilotStartMetrics,
-} from 'bunpilot/worker';
+import { bunpilotOnShutdown, bunpilotReady, bunpilotStartMetrics } from 'bunpilot/worker';
 
 const server = Bun.serve({
   port: Number(process.env.BUNPILOT_PORT ?? 3000),
@@ -166,20 +162,20 @@ Lifecycle commands accept `all` where applicable. `reload` rejects stopped apps;
 
 ## Configuration defaults
 
-| Option | Default | Notes |
-|---|---:|---|
-| `instances` | `1` | `'max'` uses logical CPU count |
-| `maxRestarts` | `15` | Per restart window |
-| `maxRestartWindow` | `900000` | 15 minutes |
-| `minUptime` | `30000` | Resets consecutive crash backoff |
-| `killTimeout` | `5000` | Then escalates to `SIGKILL` |
-| `shutdownSignal` | `SIGTERM` | `SIGTERM` or `SIGINT` |
-| `readyTimeout` | `30000` | Worker must call `bunpilotReady()` |
-| `healthCheck` | enabled | `/health`, 30 s interval, 5 s timeout, threshold 3 |
-| `backoff` | `1000 × 2`, max `30000` | Milliseconds |
-| `logs` | 10 MiB, 5 rotations | Stored under `~/.bunpilot/logs/<app>` |
-| `metrics` | enabled | 5 s collection, HTTP port 9615 |
-| `clustering` | enabled, `auto` | Effective only with multiple ported workers |
+| Option             |                 Default | Notes                                              |
+| ------------------ | ----------------------: | -------------------------------------------------- |
+| `instances`        |                     `1` | `'max'` uses logical CPU count                     |
+| `maxRestarts`      |                    `15` | Per restart window                                 |
+| `maxRestartWindow` |                `900000` | 15 minutes                                         |
+| `minUptime`        |                 `30000` | Resets consecutive crash backoff                   |
+| `killTimeout`      |                  `5000` | Then escalates to `SIGKILL`                        |
+| `shutdownSignal`   |               `SIGTERM` | `SIGTERM` or `SIGINT`                              |
+| `readyTimeout`     |                 `30000` | Worker must call `bunpilotReady()`                 |
+| `healthCheck`      |                 enabled | `/health`, 30 s interval, 5 s timeout, threshold 3 |
+| `backoff`          | `1000 × 2`, max `30000` | Milliseconds                                       |
+| `logs`             |     10 MiB, 5 rotations | Stored under `~/.bunpilot/logs/<app>`              |
+| `metrics`          |                 enabled | 5 s collection, HTTP port 9615                     |
+| `clustering`       |         enabled, `auto` | Effective only with multiple ported workers        |
 
 Configuration is validated before use. App names and log paths cannot traverse directories; ports, intervals, restart limits, signals, environment entries, and nested objects are checked strictly. Custom log filenames are relative to the app log directory.
 
@@ -213,17 +209,17 @@ Override the base with `BUNPILOT_HOME`, the socket with `BUNPILOT_SOCKET`, or co
 ## Development and verification
 
 ```bash
-bun run check          # Biome; no ESLint or Prettier
+bun run check          # Oxfmt formatting and Oxlint lint/import checks
 bun run typecheck
 bun test
-bun run test:model     # deterministic model/reference invariants
+bun run test:model     # deterministic fast-check model/reference invariants
 bun run test:coverage
 bun run simulate
 bun run simulate:cluster
 bun run version:check
 ```
 
-The model suite drives tens of thousands of seeded state transitions and hundreds of thousands of assertions across lifecycle legality, crash-backoff isolation, and arbitrary UTF-8 NDJSON chunking. See [AGENTS.md](./AGENTS.md) for architecture invariants and the required contributor workflow.
+The model suite uses fast-check to drive long, replayable operation sequences and independent reference models across lifecycle legality, crash-backoff isolation, telemetry ingestion, and arbitrary UTF-8 NDJSON chunking. See [AGENTS.md](./AGENTS.md) for architecture invariants and the required contributor workflow.
 
 ## Releases
 

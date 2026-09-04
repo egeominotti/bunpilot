@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 //
 // Runs inside a managed worker process and snapshots the JavaScriptCore runtime
-// state: deep heap composition (bun:jsc heapStats + node:v8), derived GC
+// state: deep heap composition (bun:jsc heapStats with a node:v8 fallback), derived GC
 // pressure (Bun has no native GC event stream, so we infer it from successive
 // heap samples), and event-loop / execution-stack health.
 //
@@ -113,34 +113,47 @@ export interface TelemetrySnapshot {
 }
 
 /**
- * Take a deep telemetry snapshot. `deep` controls whether the (relatively
- * expensive) per-object-type heap census is included.
+ * Take a telemetry snapshot. `deep` controls whether runtime heap probes are
+ * performed; shallow mode reports process heap sizes without a heap walk.
  */
 export function collectTelemetry(state: TelemetryState, deep = true): TelemetrySnapshot {
   const now = Date.now();
   const mem = safeMemoryUsage();
-  const v8Heap = safeV8HeapStatistics();
-  const jscHeap = safeJscHeapStats();
+  // Both Bun's node:v8 shim and bun:jsc ultimately perform the same full heap
+  // walk. Never call both, and keep shallow collection free of heap walks.
+  const jscHeap = deep ? safeJscHeapStats() : null;
+  const v8Heap = deep && !jscHeap ? safeV8HeapStatistics() : null;
 
   // -- Heap -----------------------------------------------------------------
-  const heapSize = jscHeap ? nonNeg(jscHeap.heapSize) : nonNeg(v8Heap.used_heap_size);
+  const heapSize = jscHeap
+    ? nonNeg(jscHeap.heapSize)
+    : v8Heap
+      ? nonNeg(v8Heap.used_heap_size)
+      : nonNeg(mem.heapUsed);
+  const heapCapacity = jscHeap
+    ? nonNeg(jscHeap.heapCapacity)
+    : v8Heap
+      ? nonNeg(v8Heap.total_heap_size)
+      : nonNeg(mem.heapTotal);
   const topObjectTypes: HeapObjectType[] =
     deep && jscHeap ? topTypes(jscHeap.objectTypeCounts) : [];
 
   const heap: HeapMetrics = {
+    censusAvailable: jscHeap !== null,
+    v8StatisticsAvailable: v8Heap !== null,
     heapSize,
-    heapCapacity: jscHeap ? nonNeg(jscHeap.heapCapacity) : nonNeg(v8Heap.total_heap_size),
+    heapCapacity,
     extraMemory: jscHeap ? nonNeg(jscHeap.extraMemorySize) : 0,
     objectCount: jscHeap ? nonNeg(jscHeap.objectCount) : 0,
     protectedObjectCount: jscHeap ? nonNeg(jscHeap.protectedObjectCount) : 0,
     globalObjectCount: jscHeap ? nonNeg(jscHeap.globalObjectCount) : 0,
-    usedHeapSize: nonNeg(v8Heap.used_heap_size),
-    totalHeapSize: nonNeg(v8Heap.total_heap_size),
-    heapSizeLimit: nonNeg(v8Heap.heap_size_limit),
-    mallocedMemory: nonNeg(v8Heap.malloced_memory),
-    peakMallocedMemory: nonNeg(v8Heap.peak_malloced_memory),
-    nativeContexts: nonNeg(v8Heap.number_of_native_contexts),
-    detachedContexts: nonNeg(v8Heap.number_of_detached_contexts),
+    usedHeapSize: v8Heap ? nonNeg(v8Heap.used_heap_size) : heapSize,
+    totalHeapSize: v8Heap ? nonNeg(v8Heap.total_heap_size) : heapCapacity,
+    heapSizeLimit: v8Heap ? nonNeg(v8Heap.heap_size_limit) : 0,
+    mallocedMemory: v8Heap ? nonNeg(v8Heap.malloced_memory) : 0,
+    peakMallocedMemory: v8Heap ? nonNeg(v8Heap.peak_malloced_memory) : 0,
+    nativeContexts: v8Heap ? nonNeg(v8Heap.number_of_native_contexts) : 0,
+    detachedContexts: v8Heap ? nonNeg(v8Heap.number_of_detached_contexts) : 0,
     arrayBuffers: nonNeg(mem.arrayBuffers ?? 0),
     topObjectTypes,
   };
@@ -155,8 +168,9 @@ export function collectTelemetry(state: TelemetryState, deep = true): TelemetryS
     state.inferredCollections += 1;
   }
   const allocationRate = growth > 0 && elapsedSec > 0 ? growth / elapsedSec : 0;
+  const utilizationCeiling = v8Heap ? heap.heapSizeLimit : heapCapacity;
   const heapUtilization =
-    heap.heapSizeLimit > 0 ? Math.min(1, heap.usedHeapSize / heap.heapSizeLimit) : 0;
+    utilizationCeiling > 0 ? Math.min(1, heap.usedHeapSize / utilizationCeiling) : 0;
 
   const gc: GcMetrics = {
     heapGrowthBytes: finite(growth),
@@ -207,23 +221,11 @@ function safeMemoryUsage(): NodeJS.MemoryUsage {
 
 type V8HeapStatistics = ReturnType<typeof v8.getHeapStatistics>;
 
-function safeV8HeapStatistics(): V8HeapStatistics {
+function safeV8HeapStatistics(): V8HeapStatistics | null {
   try {
     return v8.getHeapStatistics();
   } catch {
-    return {
-      total_heap_size: 0,
-      total_heap_size_executable: 0,
-      total_physical_size: 0,
-      total_available_size: 0,
-      used_heap_size: 0,
-      heap_size_limit: 0,
-      malloced_memory: 0,
-      peak_malloced_memory: 0,
-      does_zap_garbage: 0,
-      number_of_native_contexts: 0,
-      number_of_detached_contexts: 0,
-    } as V8HeapStatistics;
+    return null;
   }
 }
 

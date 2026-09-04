@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Running Biome and TypeScript checks..."
+echo "Running Oxfmt, Oxlint, and TypeScript checks..."
 bun run check
 bun run typecheck
 bun run typecheck:test

@@ -39,6 +39,8 @@ function assertSnapshotInvariants(s: TelemetrySnapshot): void {
   expect(s.heap.heapSizeLimit).toBeGreaterThanOrEqual(0);
   expect(s.heap.arrayBuffers).toBeGreaterThanOrEqual(0);
   expect(s.heap.topObjectTypes.length).toBeLessThanOrEqual(15);
+  expect(typeof s.heap.censusAvailable).toBe('boolean');
+  expect(typeof s.heap.v8StatisticsAvailable).toBe('boolean');
   for (const entry of s.heap.topObjectTypes) {
     expect(typeof entry.type).toBe('string');
     expect(entry.count).toBeGreaterThanOrEqual(0);
@@ -102,12 +104,20 @@ describe('deep telemetry collector', () => {
     }
   });
 
-  test('shallow mode omits the per-object-type census but keeps heap sizes', () => {
+  test('shallow mode explicitly marks runtime-specific statistics unavailable', () => {
     const state = createTelemetryState();
     try {
       const snap = collectTelemetry(state, false);
       expect(snap.heap.topObjectTypes.length).toBe(0);
       expect(snap.heap.heapSize).toBeGreaterThanOrEqual(0);
+      expect(snap.heap.censusAvailable).toBe(false);
+      expect(snap.heap.v8StatisticsAvailable).toBe(false);
+      expect(snap.heap.objectCount).toBe(0);
+      expect(snap.heap.heapSizeLimit).toBe(0);
+      expect(snap.heap.mallocedMemory).toBe(0);
+      expect(snap.heap.peakMallocedMemory).toBe(0);
+      expect(snap.heap.nativeContexts).toBe(0);
+      expect(snap.heap.detachedContexts).toBe(0);
       assertFiniteNumbers(snap, 'shallow');
     } finally {
       disposeTelemetryState(state);

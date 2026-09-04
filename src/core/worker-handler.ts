@@ -414,6 +414,10 @@ function sanitizeTelemetry(
   if (!payload.heap && !payload.gc && !payload.stack) return null;
 
   const heap: HeapMetrics = {
+    // Missing flags identify payloads from older SDKs, whose numeric fields
+    // predate availability metadata and must remain visible for compatibility.
+    censusAvailable: payload.heap ? (payload.heap.censusAvailable ?? true) : false,
+    v8StatisticsAvailable: payload.heap ? (payload.heap.v8StatisticsAvailable ?? true) : false,
     heapSize: sanitizeNonNeg(payload.heap?.heapSize),
     heapCapacity: sanitizeNonNeg(payload.heap?.heapCapacity),
     extraMemory: sanitizeNonNeg(payload.heap?.extraMemory),

@@ -4,7 +4,8 @@ This repository ships a Bun-native process manager and a zero-runtime-dependency
 
 ## Supported environment
 
-- Bun 1.3.14 or newer in the 1.3 line
+- Bun 1.4.1 exactly; keep local development, CI, release builds, `packageManager`,
+  `engines`, and `bun-types` aligned to this version
 - macOS and Linux, on x64 and arm64
 - TypeScript in strict mode, ESM only
 - Unix-domain sockets for daemon control
@@ -27,8 +28,8 @@ Never commit local runtime data, generated configs, databases, sockets, logs, co
 
 ```bash
 npm ci --ignore-scripts     # deterministic dependency install from package-lock.json
-bun run check               # Biome format, lint, and import checks
-bun run check:fix           # apply safe Biome fixes
+bun run check               # Oxfmt formatting and Oxlint checks
+bun run check:fix           # apply safe Oxfmt and Oxlint fixes
 bun run typecheck           # strict TypeScript validation
 bun test                    # complete unit, integration, regression, and model suite
 bun run test:model          # deterministic model-based invariant suite
@@ -39,7 +40,8 @@ bun run version:check       # package/source version consistency
 bun run build               # native single executable
 ```
 
-Use Biome only. Do not reintroduce ESLint, Prettier, their configs, or their dependencies.
+Use Oxfmt for formatting and Oxlint for lint/import checks. Do not introduce a second
+formatter or linter.
 
 ## Architecture map
 
@@ -79,7 +81,11 @@ Use Biome only. Do not reintroduce ESLint, Prettier, their configs, or their dep
 
 For ordinary logic, add focused unit tests. For sockets, processes, proxying, SQLite, and log I/O, add integration tests with unique temporary paths and ports and guaranteed cleanup.
 
-When behavior is a state machine or sequence-dependent, add or extend a deterministic model-based test. Generate long operation sequences from a seeded PRNG, maintain a small independent reference model, and assert invariants after every operation. A failing seed must be printed or statically reproducible. Never replace model tests with random smoke tests.
+When behavior is a state machine or sequence-dependent, add or extend a deterministic
+model-based test with fast-check. Generate long operation sequences, maintain a small
+independent reference model, and assert invariants after every operation. Configure an
+explicit seed and run count so failures remain replayable; preserve fast-check's seed and
+path in failure output. Never replace model tests with random smoke tests.
 
 Tests must not rely on ordering across files, real user state under `~/.bunpilot`, fixed occupied ports, network access, or sleeps longer than needed. Restore monkey-patched globals and kill spawned processes in cleanup hooks.
 

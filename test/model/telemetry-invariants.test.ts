@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from 'bun:test';
+import fc from 'fast-check';
 import type { AppConfig, WorkerInfo, WorkerMessage } from '../../src/config/types';
 import { toAppStatus } from '../../src/core/app-status';
 import { CrashRecovery } from '../../src/core/backoff';
@@ -87,6 +88,8 @@ const ALLOWED_MEMORY_KEYS = new Set([
   'timestamp',
 ]);
 const ALLOWED_HEAP_KEYS = new Set([
+  'censusAvailable',
+  'v8StatisticsAvailable',
   'heapSize',
   'heapCapacity',
   'extraMemory',
@@ -307,196 +310,211 @@ function assertKeysSubsetOf(
 
 describe('telemetry ingestion — model-based invariants', () => {
   test('hostile metrics payloads never corrupt orchestrator state (T1/T2/T3)', () => {
-    for (let seed = 1; seed <= 64; seed++) {
-      const next = random(seed);
-      const workers = [makeWorker(0), makeWorker(1)];
-      const managed = makeManagedApp(workers, makeConfig());
-      const handler = makeHandler();
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 0x7fff_ffff }), (seed) => {
+        const next = random(seed);
+        const workers = [makeWorker(0), makeWorker(1)];
+        const managed = makeManagedApp(workers, makeConfig());
+        const handler = makeHandler();
 
-      for (let step = 0; step < 200; step++) {
-        const wid = integer(next, workers.length);
-        const payload = hostileMetricsPayload(next);
-        handler.handleMessage(managed, wid, {
-          type: 'metrics',
-          payload,
-        } as unknown as WorkerMessage);
+        for (let step = 0; step < 200; step++) {
+          const wid = integer(next, workers.length);
+          const payload = hostileMetricsPayload(next);
+          handler.handleMessage(managed, wid, {
+            type: 'metrics',
+            payload,
+          } as unknown as WorkerMessage);
 
-        const worker = workers[wid] as WorkerInfo;
+          const worker = workers[wid] as WorkerInfo;
 
-        // T1 — nothing retained is non-finite.
-        assertAllNumbersFinite(worker.memory, 'worker.memory', seed);
-        assertAllNumbersFinite(worker.cpu, 'worker.cpu', seed);
-        assertAllNumbersFinite(worker.telemetry, 'worker.telemetry', seed);
+          // T1 — nothing retained is non-finite.
+          assertAllNumbersFinite(worker.memory, 'worker.memory', seed);
+          assertAllNumbersFinite(worker.cpu, 'worker.cpu', seed);
+          assertAllNumbersFinite(worker.telemetry, 'worker.telemetry', seed);
 
-        // T1 — the CPU percentage a consumer will .toFixed() is finite and >= 0.
-        if (worker.cpu) {
-          expect(Number.isFinite(worker.cpu.percentage)).toBe(true);
-          expect(worker.cpu.percentage).toBeGreaterThanOrEqual(0);
-        }
-
-        // T2 — only known keys entered state (no __proto__ / evil / etc.).
-        if (worker.memory)
-          assertKeysSubsetOf(
-            worker.memory as unknown as Record<string, unknown>,
-            ALLOWED_MEMORY_KEYS,
-            'worker.memory',
-            seed,
-          );
-        const t = worker.telemetry;
-        if (t) {
-          assertKeysSubsetOf(
-            t.heap as unknown as Record<string, unknown>,
-            ALLOWED_HEAP_KEYS,
-            'telemetry.heap',
-            seed,
-          );
-          assertKeysSubsetOf(
-            t.gc as unknown as Record<string, unknown>,
-            ALLOWED_GC_KEYS,
-            'telemetry.gc',
-            seed,
-          );
-          assertKeysSubsetOf(
-            t.stack as unknown as Record<string, unknown>,
-            ALLOWED_STACK_KEYS,
-            'telemetry.stack',
-            seed,
-          );
-
-          // T3 — bounds + signs.
-          expect(t.heap.topObjectTypes.length).toBeLessThanOrEqual(MAX_RETAINED_OBJECT_TYPES);
-          for (const entry of t.heap.topObjectTypes) {
-            expect(typeof entry.type).toBe('string');
-            expect(entry.count).toBeGreaterThanOrEqual(0);
+          // T1 — the CPU percentage a consumer will .toFixed() is finite and >= 0.
+          if (worker.cpu) {
+            expect(Number.isFinite(worker.cpu.percentage)).toBe(true);
+            expect(worker.cpu.percentage).toBeGreaterThanOrEqual(0);
           }
-          expect(t.gc.reclaimedBytes).toBeGreaterThanOrEqual(0);
-          expect(t.gc.allocationRateBytesPerSec).toBeGreaterThanOrEqual(0);
-          expect(t.gc.inferredCollections).toBeGreaterThanOrEqual(0);
-          expect(t.stack.eventLoopLagMs).toBeGreaterThanOrEqual(0);
-          expect(t.stack.activeResources).toBeGreaterThanOrEqual(0);
+
+          // T2 — only known keys entered state (no __proto__ / evil / etc.).
+          if (worker.memory)
+            assertKeysSubsetOf(
+              worker.memory as unknown as Record<string, unknown>,
+              ALLOWED_MEMORY_KEYS,
+              'worker.memory',
+              seed,
+            );
+          const t = worker.telemetry;
+          if (t) {
+            assertKeysSubsetOf(
+              t.heap as unknown as Record<string, unknown>,
+              ALLOWED_HEAP_KEYS,
+              'telemetry.heap',
+              seed,
+            );
+            assertKeysSubsetOf(
+              t.gc as unknown as Record<string, unknown>,
+              ALLOWED_GC_KEYS,
+              'telemetry.gc',
+              seed,
+            );
+            assertKeysSubsetOf(
+              t.stack as unknown as Record<string, unknown>,
+              ALLOWED_STACK_KEYS,
+              'telemetry.stack',
+              seed,
+            );
+
+            // T3 — bounds + signs.
+            expect(t.heap.topObjectTypes.length).toBeLessThanOrEqual(MAX_RETAINED_OBJECT_TYPES);
+            for (const entry of t.heap.topObjectTypes) {
+              expect(typeof entry.type).toBe('string');
+              expect(entry.count).toBeGreaterThanOrEqual(0);
+            }
+            expect(t.gc.reclaimedBytes).toBeGreaterThanOrEqual(0);
+            expect(t.gc.allocationRateBytesPerSec).toBeGreaterThanOrEqual(0);
+            expect(t.gc.inferredCollections).toBeGreaterThanOrEqual(0);
+            expect(t.stack.eventLoopLagMs).toBeGreaterThanOrEqual(0);
+            expect(t.stack.activeResources).toBeGreaterThanOrEqual(0);
+          }
         }
-      }
-    }
+      }),
+      { seed: 0x7e1e, numRuns: 64 },
+    );
   });
 
   test('IPC validator is sound and complete for metrics payloads (T4)', () => {
-    for (let seed = 1; seed <= 96; seed++) {
-      const next = random(seed);
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 0x7fff_ffff }), (seed) => {
+        const next = random(seed);
 
-      // Soundness: a hostile payload that the validator ACCEPTS must have every
-      // required numeric field finite.
-      const hostile = hostileMetricsPayload(next);
-      const msg = { type: 'metrics', payload: hostile };
-      if (isValidWorkerMessage(msg)) {
-        const p = hostile as { memory: Record<string, number>; cpu: Record<string, number> };
-        for (const k of ['rss', 'heapTotal', 'heapUsed', 'external']) {
-          expect(Number.isFinite(p.memory[k])).toBe(true);
-          expect(p.memory[k]).toBeGreaterThanOrEqual(0);
+        // Soundness: a hostile payload that the validator ACCEPTS must have every
+        // required numeric field finite.
+        const hostile = hostileMetricsPayload(next);
+        const msg = { type: 'metrics', payload: hostile };
+        if (isValidWorkerMessage(msg)) {
+          const p = hostile as { memory: Record<string, number>; cpu: Record<string, number> };
+          for (const k of ['rss', 'heapTotal', 'heapUsed', 'external']) {
+            expect(Number.isFinite(p.memory[k])).toBe(true);
+            expect(p.memory[k]).toBeGreaterThanOrEqual(0);
+          }
+          for (const k of ['user', 'system']) {
+            expect(Number.isFinite(p.cpu[k])).toBe(true);
+          }
         }
-        for (const k of ['user', 'system']) {
-          expect(Number.isFinite(p.cpu[k])).toBe(true);
-        }
-      }
 
-      // Completeness: a fully well-formed payload is always accepted.
-      const clean = {
-        type: 'metrics',
-        payload: {
-          memory: { rss: 10, heapTotal: 20, heapUsed: 5, external: 1, arrayBuffers: 2 },
-          cpu: { user: 100 + integer(next, 1_000), system: integer(next, 1_000) },
-          heap: {
-            heapSize: 1,
-            heapCapacity: 2,
-            extraMemory: 0,
-            objectCount: 3,
-            protectedObjectCount: 0,
-            globalObjectCount: 1,
-            usedHeapSize: 1,
-            totalHeapSize: 2,
-            heapSizeLimit: 100,
-            mallocedMemory: 1,
-            peakMallocedMemory: 2,
-            nativeContexts: 1,
-            detachedContexts: 0,
-            arrayBuffers: 2,
-            topObjectTypes: [{ type: 'Function', count: 9 }],
+        // Completeness: a fully well-formed payload is always accepted.
+        const clean = {
+          type: 'metrics',
+          payload: {
+            memory: { rss: 10, heapTotal: 20, heapUsed: 5, external: 1, arrayBuffers: 2 },
+            cpu: { user: 100 + integer(next, 1_000), system: integer(next, 1_000) },
+            heap: {
+              censusAvailable: true,
+              v8StatisticsAvailable: false,
+              heapSize: 1,
+              heapCapacity: 2,
+              extraMemory: 0,
+              objectCount: 3,
+              protectedObjectCount: 0,
+              globalObjectCount: 1,
+              usedHeapSize: 1,
+              totalHeapSize: 2,
+              heapSizeLimit: 100,
+              mallocedMemory: 1,
+              peakMallocedMemory: 2,
+              nativeContexts: 1,
+              detachedContexts: 0,
+              arrayBuffers: 2,
+              topObjectTypes: [{ type: 'Function', count: 9 }],
+            },
+            gc: {
+              heapGrowthBytes: -50,
+              allocationRateBytesPerSec: 0,
+              reclaimedBytes: 50,
+              inferredCollections: 1,
+              heapUtilization: 0.01,
+              compileTimeMs: 3,
+            },
+            stack: {
+              eventLoopLagMs: 0.5,
+              eventLoopLagMaxMs: 1,
+              eventLoopLagP99Ms: 0.9,
+              eventLoopUtilization: 0.1,
+              activeResources: 4,
+              callStackDepth: 3,
+            },
           },
-          gc: {
-            heapGrowthBytes: -50,
-            allocationRateBytesPerSec: 0,
-            reclaimedBytes: 50,
-            inferredCollections: 1,
-            heapUtilization: 0.01,
-            compileTimeMs: 3,
-          },
-          stack: {
-            eventLoopLagMs: 0.5,
-            eventLoopLagMaxMs: 1,
-            eventLoopLagP99Ms: 0.9,
-            eventLoopUtilization: 0.1,
-            activeResources: 4,
-            callStackDepth: 3,
-          },
-        },
-      };
-      expect(isValidWorkerMessage(clean)).toBe(true);
+        };
+        expect(isValidWorkerMessage(clean)).toBe(true);
 
-      // A single non-finite required field must be rejected (fail closed).
-      const bad = structuredClone(clean);
-      (bad.payload.memory as { rss: number }).rss = Number.NaN;
-      expect(isValidWorkerMessage(bad)).toBe(false);
+        // A single non-finite required field must be rejected (fail closed).
+        const bad = structuredClone(clean);
+        (bad.payload.memory as { rss: number }).rss = Number.NaN;
+        expect(isValidWorkerMessage(bad)).toBe(false);
 
-      // A negative heapGrowthBytes is legal (net reclaim); a negative
-      // reclaimedBytes is not.
-      const negGrowth = structuredClone(clean);
-      (negGrowth.payload.gc as { heapGrowthBytes: number }).heapGrowthBytes = -123;
-      expect(isValidWorkerMessage(negGrowth)).toBe(true);
-      const negReclaim = structuredClone(clean);
-      (negReclaim.payload.gc as { reclaimedBytes: number }).reclaimedBytes = -1;
-      expect(isValidWorkerMessage(negReclaim)).toBe(false);
-    }
+        // A negative heapGrowthBytes is legal (net reclaim); a negative
+        // reclaimedBytes is not.
+        const negGrowth = structuredClone(clean);
+        (negGrowth.payload.gc as { heapGrowthBytes: number }).heapGrowthBytes = -123;
+        expect(isValidWorkerMessage(negGrowth)).toBe(true);
+        const negReclaim = structuredClone(clean);
+        (negReclaim.payload.gc as { reclaimedBytes: number }).reclaimedBytes = -1;
+        expect(isValidWorkerMessage(negReclaim)).toBe(false);
+
+        const invalidAvailability = structuredClone(clean);
+        (invalidAvailability.payload.heap as { censusAvailable: unknown }).censusAvailable = 1;
+        expect(isValidWorkerMessage(invalidAvailability)).toBe(false);
+      }),
+      { seed: 0x1c0, numRuns: 96 },
+    );
   });
 
   test('status snapshots survive JSON round-trip and never leak env secrets (T5)', () => {
-    for (let seed = 1; seed <= 48; seed++) {
-      const next = random(seed);
-      const secret = `SUPERSECRET-${seed}-${integer(next, 1_000_000)}`;
-      const config = makeConfig({
-        name: `app-${seed}`,
-        env: { DATABASE_URL: `postgres://u:${secret}@db/x`, NODE_ENV: 'production' },
-      });
-      const workers = [makeWorker(0), makeWorker(1)];
-      const managed = makeManagedApp(workers, config);
-      const handler = makeHandler();
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 0x7fff_ffff }), (seed) => {
+        const next = random(seed);
+        const secret = `SUPERSECRET-${seed}-${integer(next, 1_000_000)}`;
+        const config = makeConfig({
+          name: `app-${seed}`,
+          env: { DATABASE_URL: `postgres://u:${secret}@db/x`, NODE_ENV: 'production' },
+        });
+        const workers = [makeWorker(0), makeWorker(1)];
+        const managed = makeManagedApp(workers, config);
+        const handler = makeHandler();
 
-      for (let step = 0; step < 40; step++) {
-        const wid = integer(next, workers.length);
-        handler.handleMessage(managed, wid, {
-          type: 'metrics',
-          payload: hostileMetricsPayload(next),
-        } as unknown as WorkerMessage);
-      }
-
-      const status = toAppStatus(managed);
-      const serialised = JSON.stringify(status);
-
-      // T5a — no numeric field became null (i.e. everything was finite).
-      const parsed = JSON.parse(serialised);
-      assertAllNumbersFinite(parsed, 'status', seed);
-      for (const w of parsed.workers) {
-        if (w.cpu) expect(w.cpu.percentage).not.toBeNull();
-        if (w.telemetry) {
-          expect(w.telemetry.gc.heapUtilization).not.toBeNull();
-          expect(w.telemetry.stack.eventLoopLagMs).not.toBeNull();
+        for (let step = 0; step < 40; step++) {
+          const wid = integer(next, workers.length);
+          handler.handleMessage(managed, wid, {
+            type: 'metrics',
+            payload: hostileMetricsPayload(next),
+          } as unknown as WorkerMessage);
         }
-      }
 
-      // T5b — the raw env secret is never echoed into a snapshot.
-      if (serialised.includes(secret)) {
-        throw new Error(`T5 violated (seed=${seed}): env secret leaked into status snapshot`);
-      }
-      expect(serialised).not.toContain(secret);
-      expect(status.config.script).toBe('app.ts');
-    }
+        const status = toAppStatus(managed);
+        const serialised = JSON.stringify(status);
+
+        // T5a — no numeric field became null (i.e. everything was finite).
+        const parsed = JSON.parse(serialised);
+        assertAllNumbersFinite(parsed, 'status', seed);
+        for (const w of parsed.workers) {
+          if (w.cpu) expect(w.cpu.percentage).not.toBeNull();
+          if (w.telemetry) {
+            expect(w.telemetry.gc.heapUtilization).not.toBeNull();
+            expect(w.telemetry.stack.eventLoopLagMs).not.toBeNull();
+          }
+        }
+
+        // T5b — the raw env secret is never echoed into a snapshot.
+        if (serialised.includes(secret)) {
+          throw new Error(`T5 violated (seed=${seed}): env secret leaked into status snapshot`);
+        }
+        expect(serialised).not.toContain(secret);
+        expect(status.config.script).toBe('app.ts');
+      }),
+      { seed: 0x57a7, numRuns: 48 },
+    );
   });
 });

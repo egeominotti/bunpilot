@@ -122,7 +122,7 @@ afterEach(async () => {
     // Neutralise the synthetic kill failure so teardown can't reject.
     m.processManager.killWorker = async () => 'exited' as const;
     m.processManager.isRunning = () => false;
-    for (const name of [...m.apps.keys()]) {
+    for (const name of Array.from(m.apps.keys()) as string[]) {
       await master.deleteApp(name).catch(() => undefined);
     }
   }

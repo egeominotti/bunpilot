@@ -9,9 +9,9 @@ Read `AGENTS.md` and inspect the affected module plus its tests before editing.
 
 Reproduce bugs with focused regression tests. Preserve app-level isolation, valid lifecycle transitions, generation safety, bounded untrusted input, collision-free ports, retryable rollback, and idempotent cleanup.
 
-Use Biome for formatting, linting, and import organization. Do not introduce ESLint or Prettier. Keep strict TypeScript and avoid runtime dependencies unless the change cannot be implemented safely with Bun or Node built-ins.
+Use Oxfmt for formatting and Oxlint for linting and import checks. Keep strict TypeScript and avoid runtime dependencies unless the change cannot be implemented safely with Bun or Node built-ins. Keep Bun, `bun-types`, CI, and release builds pinned to 1.4.1.
 
-Add deterministic model-based tests when behavior depends on long event sequences. Maintain an independent reference model and assert invariants after each seeded operation. Use integration tests for real sockets, subprocesses, proxy traffic, SQLite, and log I/O.
+Add deterministic fast-check model/property tests when behavior depends on long event sequences. Maintain an independent reference model, assert invariants after each operation, and configure replayable seeds and run counts. Use integration tests for real sockets, subprocesses, proxy traffic, SQLite, and log I/O.
 
 Validate narrowly while iterating, then run:
 

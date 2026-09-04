@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error"
+  },
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "ignorePatterns": ["node_modules", "dist", "coverage", "bunpilot", "package-lock.json"],
+  "rules": {
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error",
+    "no-prototype-builtins": "error",
+    "no-unsafe-finally": "error"
+  }
+}

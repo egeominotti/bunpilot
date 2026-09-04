@@ -94,8 +94,12 @@ function printPrometheus(apps: AppStatus[]): void {
       const t = w.telemetry;
       if (t) {
         lines.push(`bunpilot_heap_size_bytes${labels(w)} ${t.heap.heapSize}`);
-        lines.push(`bunpilot_heap_limit_bytes${labels(w)} ${t.heap.heapSizeLimit}`);
-        lines.push(`bunpilot_heap_object_count${labels(w)} ${t.heap.objectCount}`);
+        if (t.heap.v8StatisticsAvailable !== false) {
+          lines.push(`bunpilot_heap_limit_bytes${labels(w)} ${t.heap.heapSizeLimit}`);
+        }
+        if (t.heap.censusAvailable !== false) {
+          lines.push(`bunpilot_heap_object_count${labels(w)} ${t.heap.objectCount}`);
+        }
         lines.push(`bunpilot_heap_array_buffers_bytes${labels(w)} ${t.heap.arrayBuffers}`);
         lines.push(`bunpilot_gc_heap_utilization${labels(w)} ${t.gc.heapUtilization.toFixed(4)}`);
         lines.push(
@@ -147,13 +151,18 @@ function heapSection(t: WorkerTelemetry): string[] {
   const h = t.heap;
   const lines = [
     '  heap:',
-    `    live/limit    ${formatMemory(h.heapSize)} / ${formatMemory(h.heapSizeLimit)} (${(t.gc.heapUtilization * 100).toFixed(1)}%)`,
+    `    live/capacity ${formatMemory(h.heapSize)} / ${formatMemory(h.heapCapacity)} (${(t.gc.heapUtilization * 100).toFixed(1)}%)`,
     `    capacity      ${formatMemory(h.heapCapacity)}`,
-    `    objects       ${h.objectCount.toLocaleString()}`,
     `    arrayBuffers  ${formatMemory(h.arrayBuffers)}`,
-    `    contexts      ${h.nativeContexts} native, ${h.detachedContexts} detached`,
   ];
-  if (h.topObjectTypes.length > 0) {
+  if (h.v8StatisticsAvailable !== false) {
+    lines.push(`    hard limit    ${formatMemory(h.heapSizeLimit)}`);
+    lines.push(`    contexts      ${h.nativeContexts} native, ${h.detachedContexts} detached`);
+  }
+  if (h.censusAvailable !== false) {
+    lines.push(`    objects       ${h.objectCount.toLocaleString()}`);
+  }
+  if (h.censusAvailable !== false && h.topObjectTypes.length > 0) {
     lines.push('    top object types:');
     for (const { type, count } of h.topObjectTypes.slice(0, 8)) {
       lines.push(`      ${type.padEnd(22)} ${count.toLocaleString()}`);

@@ -137,7 +137,10 @@ test('the real daemon serves a bunqueue worker’s deep telemetry over /metrics 
   // -- 1. Prometheus exposition carries heap / GC / stack families ----------
   const prom = await fetchText('/metrics');
   expect(prom).toContain('bunpilot_worker_heap_size_bytes{app="bunqueue"');
-  expect(prom).toContain('bunpilot_worker_heap_limit_bytes{app="bunqueue"');
+  // Bun/JSC does not expose V8's hard-limit/context statistics; unavailable
+  // values must be omitted rather than exported as plausible-looking zeros.
+  expect(prom).not.toContain('bunpilot_worker_heap_limit_bytes{app="bunqueue"');
+  expect(prom).not.toContain('bunpilot_worker_heap_native_contexts{app="bunqueue"');
   expect(prom).toContain('bunpilot_worker_gc_heap_utilization{app="bunqueue"');
   expect(prom).toContain('bunpilot_worker_event_loop_lag_ms{app="bunqueue"');
   expect(prom).toContain('bunpilot_worker_heap_object_type_count{app="bunqueue"');
@@ -151,7 +154,11 @@ test('the real daemon serves a bunqueue worker’s deep telemetry over /metrics 
     name: string;
     workers: Array<{
       telemetry: {
-        heap: { topObjectTypes: Array<{ type: string; count: number }> };
+        heap: {
+          censusAvailable: boolean;
+          v8StatisticsAvailable: boolean;
+          topObjectTypes: Array<{ type: string; count: number }>;
+        };
         gc: { heapUtilization: number };
         stack: { eventLoopLagMs: number };
       } | null;
@@ -161,6 +168,8 @@ test('the real daemon serves a bunqueue worker’s deep telemetry over /metrics 
   expect(bq).toBeDefined();
   const t = bq!.workers[0]?.telemetry;
   expect(t, 'worker telemetry missing from /api/metrics').not.toBeNull();
+  expect(t!.heap.censusAvailable).toBe(true);
+  expect(t!.heap.v8StatisticsAvailable).toBe(false);
   expect(t!.heap.topObjectTypes.length).toBeGreaterThan(0);
   expect(Number.isFinite(t!.gc.heapUtilization)).toBe(true);
   expect(t!.stack.eventLoopLagMs).toBeGreaterThanOrEqual(0);

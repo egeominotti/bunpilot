@@ -2,7 +2,54 @@
   "name": "bunpilot",
   "version": "1.0.0",
   "description": "Production-grade Bun-native process manager with clustering, health checks, and zero-downtime reloads.",
+  "keywords": [
+    "bun",
+    "bun-native",
+    "bunpilot",
+    "clustering",
+    "daemon",
+    "deployment",
+    "devops",
+    "graceful-shutdown",
+    "health-check",
+    "load-balancer",
+    "log-rotation",
+    "metrics",
+    "pm2",
+    "process-manager",
+    "prometheus",
+    "sqlite",
+    "typescript",
+    "worker",
+    "zero-downtime"
+  ],
+  "homepage": "https://github.com/egeominotti/bunpilot#readme",
+  "bugs": {
+    "url": "https://github.com/egeominotti/bunpilot/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/egeominotti/bunpilot.git"
+  },
+  "bin": {
+    "bunpilot": "src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
   "type": "module",
+  "sideEffects": false,
   "main": "src/public.ts",
   "types": "src/public.ts",
   "exports": {
@@ -12,8 +59,8 @@
     "./sdk/worker": "./src/sdk/worker.ts",
     "./package.json": "./package.json"
   },
-  "bin": {
-    "bunpilot": "src/index.ts"
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
@@ -26,72 +73,27 @@
     "typecheck": "bun run tsc --noEmit",
     "typecheck:test": "bun run tsc --noEmit -p tsconfig.test.json",
     "version:check": "bun run scripts/check-version.ts",
-    "check": "biome check .",
-    "check:fix": "biome check --write .",
-    "lint": "biome lint .",
-    "lint:fix": "biome lint --write .",
-    "format": "biome format --write .",
-    "format:check": "biome format .",
+    "check": "bun run format:check && bun run lint",
+    "check:fix": "bun run format && bun run lint:fix",
+    "lint": "oxlint --deny-warnings .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
     "ci": "bun run check && bun run typecheck && bun run typecheck:test && bun run test",
     "simulate": "bun run scripts/simulate.ts",
     "simulate:cluster": "bun run scripts/simulate-cluster.ts",
     "prepare": "husky"
   },
-  "keywords": [
-    "bun",
-    "process-manager",
-    "pm2",
-    "clustering",
-    "daemon",
-    "bunpilot",
-    "bun-native",
-    "worker",
-    "load-balancer",
-    "health-check",
-    "metrics",
-    "prometheus",
-    "log-rotation",
-    "zero-downtime",
-    "graceful-shutdown",
-    "sqlite",
-    "typescript",
-    "devops",
-    "deployment"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/egeominotti/bunpilot.git"
-  },
-  "homepage": "https://github.com/egeominotti/bunpilot#readme",
-  "bugs": {
-    "url": "https://github.com/egeominotti/bunpilot/issues"
-  },
-  "license": "MIT",
-  "files": [
-    "src",
-    "README.md",
-    "LICENSE"
-  ],
-  "sideEffects": false,
-  "publishConfig": {
-    "access": "public"
-  },
-  "packageManager": "bun@1.3.14",
-  "os": [
-    "darwin",
-    "linux"
-  ],
-  "cpu": [
-    "x64",
-    "arm64"
-  ],
-  "engines": {
-    "bun": ">=1.3.14"
-  },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.5",
-    "bun-types": "^1.3.9",
-    "husky": "^9.1.7",
-    "typescript": "^5.9.3"
-  }
+    "bun-types": "1.4.1",
+    "fast-check": "4.9.0",
+    "husky": "9.1.7",
+    "oxfmt": "0.66.0",
+    "oxlint": "1.81.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "bun": "1.4.1"
+  },
+  "packageManager": "bun@1.4.1"
 }

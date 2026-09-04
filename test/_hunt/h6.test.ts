@@ -47,7 +47,6 @@ function createCtx(): Ctx {
 }
 
 function stubMaster(master: MasterOrchestrator, ctx: Ctx): void {
-  // biome-ignore lint/suspicious/noExplicitAny: private-field stubbing, as the existing suite does
   const m = master as any;
 
   m.processManager = {
@@ -61,7 +60,6 @@ function stubMaster(master: MasterOrchestrator, ctx: Ctx): void {
       ctx.spawnCalls.push({ workerId, pid });
       ctx.messageCallbacks.set(workerId, onMessage);
       return {
-        // biome-ignore lint/suspicious/noExplicitAny: stub
         proc: {} as any,
         pid,
         stdout: new ReadableStream({
@@ -127,7 +125,6 @@ function makeConfig(name: string, port: number): AppConfig {
   };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: internal ManagedApp shape
 function clearAppTimers(managed: any): void {
   if (!managed) return;
   for (const t of managed.readyTimers.values()) clearTimeout(t);
@@ -138,7 +135,6 @@ function clearAppTimers(managed: any): void {
 
 test('no worker is spawned after stopApp/deleteApp resolves (in-flight restart)', async () => {
   const rng = makeRng(0xb00c);
-  // biome-ignore lint/suspicious/noExplicitAny: cleanup bookkeeping
   const created: Array<{ master: MasterOrchestrator; managed: any }> = [];
 
   try {
@@ -155,7 +151,6 @@ test('no worker is spawned after stopApp/deleteApp resolves (in-flight restart)'
       stubMaster(master, ctx);
 
       await master.startApp(makeConfig(name, port));
-      // biome-ignore lint/suspicious/noExplicitAny: internal registry access
       const managed = (master as any).apps.get(name);
       created.push({ master, managed });
 
@@ -181,7 +176,6 @@ test('no worker is spawned after stopApp/deleteApp resolves (in-flight restart)'
       }
 
       const spawnsAtResolve = ctx.spawnCalls.length;
-      // biome-ignore lint/suspicious/noExplicitAny: internal registry access
       const stillRegistered = (master as any).apps.has(name);
       if (op === 'delete') expect(stillRegistered).toBe(false);
 
@@ -190,10 +184,9 @@ test('no worker is spawned after stopApp/deleteApp resolves (in-flight restart)'
 
       const detail = `seed=${seed} op=${op} gapMs=${gapMs} app=${name}`;
       // INVARIANT: nothing may spawn after the lifecycle op resolved.
-      expect(
-        `${detail} spawnsAfter=${ctx.spawnCalls.length}`,
-        // biome-ignore lint/suspicious/noExplicitAny: message arg
-      ).toBe(`${detail} spawnsAfter=${spawnsAtResolve}`);
+      expect(`${detail} spawnsAfter=${ctx.spawnCalls.length}`).toBe(
+        `${detail} spawnsAfter=${spawnsAtResolve}`,
+      );
       expect(`${detail} liveSpawned=${managed.spawned.size}`).toBe(`${detail} liveSpawned=0`);
       expect(`${detail} workerState=${managed.workers[0]?.state}`).toBe(
         `${detail} workerState=stopped`,

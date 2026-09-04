@@ -229,13 +229,12 @@ function disposeTelemetry(): void {
 /**
  * Start periodic reporting of process metrics to the master.
  *
- * Reports basic memory + CPU plus deep runtime telemetry (heap composition,
- * derived GC pressure, and event-loop / stack health) unless `deep` is false,
- * in which case the per-object-type heap census (the most expensive probe) is
- * skipped.
+ * Reports basic memory + CPU plus runtime telemetry. With `deep: false`, heap
+ * walks and runtime-specific census fields are omitted while cheap process
+ * heap sizes, derived pressure, and event-loop health remain available.
  *
  * @param interval - Reporting interval in milliseconds (default 5000).
- * @param options  - `{ deep }` toggles the per-object-type heap census.
+ * @param options  - `{ deep }` toggles runtime heap walks and object census.
  */
 export function bunpilotStartMetrics(interval = 5_000, options: { deep?: boolean } = {}): void {
   assertInterval(interval, 'metrics interval');
